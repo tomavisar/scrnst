@@ -61,36 +61,16 @@ export async function GET(request: NextRequest) {
       }
 
       try {
-        // Generate a placeholder PNG image
-        const svg = `
-      <svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="grad${idx}" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#1e3a8a;stop-opacity:1" />
-            <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#60a5fa;stop-opacity:1" />
-          </linearGradient>
-        </defs>
-        <rect width="800" height="600" fill="url(#grad${idx})" />
-        <text x="400" y="280" font-family="Arial, sans-serif" font-size="36" font-weight="bold" text-anchor="middle" fill="white">
-          ${screenshot.label}
-        </text>
-        <text x="400" y="330" font-family="Arial, sans-serif" font-size="24" text-anchor="middle" fill="white">
-          STL Model View
-        </text>
-        <rect x="200" y="150" width="400" height="300" fill="none" stroke="white" stroke-width="3" opacity="0.3" />
-      </svg>
-    `
+        // Convert base64 to buffer
+        const base64Data = screenshot.image.split(",")[1]
+        const buffer = Buffer.from(base64Data, "base64")
 
-        // Convert SVG to buffer
-        const buffer = Buffer.from(svg)
-
-        // Upload to Vercel Blob as SVG
+        // Upload to Vercel Blob
         const blob = await put(
-          `stl-screenshots/${jobId}/${idx}-${screenshot.label.replace(/\s+/g, "-").toLowerCase()}.svg`,
+          `stl-screenshots/${jobId}/${idx}-${screenshot.label.replace(/\s+/g, "-").toLowerCase()}.png`,
           buffer,
           {
-            contentType: "image/svg+xml",
+            contentType: "image/png",
             access: "public",
           },
         )
@@ -100,10 +80,8 @@ export async function GET(request: NextRequest) {
         return blob.url
       } catch (uploadError) {
         console.error("Error uploading to Vercel Blob:", uploadError)
-
-        // Return a fallback URL to the placeholder API
-        const fallbackUrl = `/api/placeholder?label=${encodeURIComponent(screenshot.label)}`
-        return fallbackUrl
+        // Return the original base64 as fallback
+        return screenshot.image
       }
     }
 
