@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { v4 as uuidv4 } from "uuid"
 import { processingJobs } from "@/lib/processing-jobs"
-import { put } from "@vercel/blob"
 
 // We'll use a different approach for server-side rendering
 // Instead of trying to mock the DOM, we'll use Three.js in headless mode
@@ -96,7 +95,7 @@ async function processStlFile(stlUrl: string, jobId: string) {
     processingJobs[jobId].message = "Generating screenshots"
 
     // Generate mock screenshots with different view labels
-    const screenshots = await generateAndUploadScreenshots(jobId)
+    const screenshots = await generateAndUploadScreenshots(jobId, stlUrl)
 
     // Update job with screenshots
     processingJobs[jobId].progress = 90
@@ -117,94 +116,25 @@ async function processStlFile(stlUrl: string, jobId: string) {
   }
 }
 
-// Helper function to generate real screenshots and upload them to Vercel Blob
-async function generateAndUploadScreenshots(jobId: string) {
-  // For now, we'll create placeholder images with Canvas API
-  // In a real implementation, you'd render the actual STL file
-  const viewLabels = [
-    "Top Front Right",
-    "Top Front Left",
-    "Bottom Front Right",
-    "Bottom Front Left",
-    "Front View",
-    "Right View",
-    "Top View",
-    "Back View",
-    "Left View",
-    "Bottom View",
-    "Top Back Right",
-    "Top Back Left",
-    "Bottom Back Right",
-    "Bottom Back Left",
-    "Top Diagonal 1",
-    "Top Diagonal 2",
-  ]
+// Helper function to trigger client-side screenshot generation
+async function generateAndUploadScreenshots(jobId: string, stlUrl: string) {
+  try {
+    // Instead of generating placeholders, we'll trigger the client to generate real screenshots
+    // For now, return a message indicating the model needs to be viewed in the browser
 
-  const uploadedScreenshots = []
+    const viewerUrl = `${process.env.NEXT_PUBLIC_URL || "https://v0-3d-model-screenshots.vercel.app"}?url=${encodeURIComponent(stlUrl)}&jobId=${jobId}&autoCapture=true`
 
-  for (let i = 0; i < viewLabels.length; i++) {
-    try {
-      // Create a simple SVG as a placeholder
-      const svg = `
-        <svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="grad${i}" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" style="stop-color:#4a6fa5;stop-opacity:1" />
-              <stop offset="100%" style="stop-color:#166d3b;stop-opacity:1" />
-            </linearGradient>
-          </defs>
-          <rect width="800" height="600" fill="url(#grad${i})" />
-          <text x="400" y="280" font-family="Arial, sans-serif" font-size="36" font-weight="bold" text-anchor="middle" fill="white">
-            ${viewLabels[i]}
-          </text>
-          <text x="400" y="330" font-family="Arial, sans-serif" font-size="24" text-anchor="middle" fill="white">
-            STL Model View
-          </text>
-          <rect x="200" y="200" width="400" height="300" fill="none" stroke="white" stroke-width="3" opacity="0.3" />
-          <circle cx="400" cy="350" r="80" fill="none" stroke="white" stroke-width="2" opacity="0.2" />
-        </svg>
-      `
-
-      // Convert SVG to buffer
-      const buffer = Buffer.from(svg)
-
-      // Upload to Vercel Blob
-      const blob = await put(
-        `stl-screenshots/${jobId}/${i}-${viewLabels[i].replace(/\s+/g, "-").toLowerCase()}.svg`,
-        buffer,
-        {
-          contentType: "image/svg+xml",
-          access: "public",
-        },
-      )
-
-      uploadedScreenshots.push({
-        image: blob.url,
-        directUrl: blob.url,
-        label: viewLabels[i],
-      })
-
-      console.log(`Uploaded screenshot ${i}: ${blob.url}`)
-    } catch (error) {
-      console.error(`Error generating/uploading screenshot ${i}:`, error)
-
-      // If upload fails, use a data URL fallback
-      const fallbackSvg = `data:image/svg+xml;base64,${Buffer.from(`
-        <svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
-          <rect width="800" height="600" fill="#333" />
-          <text x="400" y="300" font-family="Arial" font-size="24" text-anchor="middle" fill="white">
-            ${viewLabels[i]}
-          </text>
-        </svg>
-      `).toString("base64")}`
-
-      uploadedScreenshots.push({
-        image: fallbackSvg,
-        directUrl: fallbackSvg,
-        label: viewLabels[i],
-      })
-    }
+    // Return a single "screenshot" that's actually a link to view the model
+    return [
+      {
+        image: viewerUrl,
+        directUrl: viewerUrl,
+        label: "View 3D Model",
+        isPlaceholder: true,
+      },
+    ]
+  } catch (error) {
+    console.error("Error in generateAndUploadScreenshots:", error)
+    throw error
   }
-
-  return uploadedScreenshots
 }

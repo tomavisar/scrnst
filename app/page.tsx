@@ -12,6 +12,7 @@ import StlViewer from "@/components/stl-viewer"
 
 // Import the shared processing jobs
 import { processingJobs } from "@/lib/processing-jobs"
+import { useRouter } from "next/navigation"
 
 export default function Home() {
   const [stlFile, setStlFile] = useState<File | null>(null)
@@ -27,6 +28,8 @@ export default function Home() {
   const [selectedScreenshot, setSelectedScreenshot] = useState<string | null>(null)
   const viewerRef = useRef(null)
   const initialLoadDone = useRef(false)
+  const router = useRouter()
+  const autoCaptureDone = useRef(false)
 
   // Check for URL parameters on initial load
   useEffect(() => {
@@ -36,6 +39,8 @@ export default function Home() {
     // Get URL parameters
     const params = new URLSearchParams(window.location.search)
     const urlParam = params.get("url")
+    const jobIdParam = params.get("jobId")
+    const autoCaptureParam = params.get("autoCapture")
 
     if (urlParam) {
       console.log("URL parameter found:", urlParam)
@@ -43,7 +48,7 @@ export default function Home() {
       setActiveTab("upload")
 
       // Auto-load the STL file
-      handleLoadFromUrl(urlParam)
+      handleLoadFromUrl(urlParam, jobIdParam, autoCaptureParam === "true")
     }
   }, [])
 
@@ -63,7 +68,7 @@ export default function Home() {
     }
   }
 
-  const handleLoadFromUrl = async (urlToLoad?: string) => {
+  const handleLoadFromUrl = async (urlToLoad?: string, jobId?: string | null, autoCapture?: boolean) => {
     const urlToUse = urlToLoad || externalUrl
     if (!urlToUse) return
 
@@ -122,11 +127,14 @@ export default function Home() {
       // Switch to the viewer tab
       setActiveTab("viewer")
 
-      // Automatically trigger screenshot capture after a short delay
-      setTimeout(() => {
-        console.log("Auto-triggering screenshot capture...")
-        captureScreenshots()
-      }, 2000)
+      // If autoCapture is enabled and we have a jobId, capture screenshots automatically
+      if (autoCapture && jobId && !autoCaptureDone.current) {
+        autoCaptureDone.current = true
+        setTimeout(async () => {
+          console.log("Auto-triggering screenshot capture for job:", jobId)
+          await captureAndUploadScreenshots(jobId)
+        }, 3000) // Wait 3 seconds for the model to load
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "An unknown error occurred")
     } finally {
@@ -229,7 +237,7 @@ export default function Home() {
       },
       {
         image:
-          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADMElEQVR4nOzVwQnAIBQFQYXff81RUkQCOyDj1YOPnbXWPmeTRef+/3O/OyBjzh3CD95BfqICMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMO0TAAD//2Anhf4QtqobAAAAAElFTkSuQmCC",
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADMElEQVR4nOzVwQnAIBQFQYXff81RUkQCOyDj1YOPnbXWPmeTRef+/3O/OyBjzh3CD95BfqICMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMK0CMO0TAAD//2Anhf4QtqobAAAAAElFTkSuQmCC",
         label: "Top Front Left",
       },
       {
@@ -275,6 +283,56 @@ export default function Home() {
         downloadScreenshot(screenshot.image, screenshot.label)
       }, index * 100) // Stagger downloads to avoid browser issues
     })
+  }
+
+  const captureAndUploadScreenshots = async (jobId: string) => {
+    if (!viewerRef.current || !stlUrl) return
+
+    setIsCapturing(true)
+    setScreenshots([])
+
+    try {
+      // Capture screenshots from the viewer
+      let capturedScreenshots: Array<{ image: string; label: string }> = []
+
+      if (viewerRef.current) {
+        try {
+          capturedScreenshots = await (viewerRef.current as any).captureScreenshots()
+        } catch (err) {
+          console.error("Error capturing screenshots:", err)
+          return
+        }
+      }
+
+      // Upload screenshots to the server
+      const response = await fetch("/api/upload-screenshots", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jobId,
+          screenshots: capturedScreenshots,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to upload screenshots")
+      }
+
+      const result = await response.json()
+      console.log("Screenshots uploaded:", result)
+
+      // Update local state
+      setScreenshots(result.screenshots)
+
+      // Show success message
+      setActiveTab("gallery")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to capture screenshots")
+    } finally {
+      setIsCapturing(false)
+    }
   }
 
   return (
