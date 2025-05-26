@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-// More robust STL parser with better error handling
+// More robust STL parser with corruption detection
 function parseSTL(buffer: ArrayBuffer) {
   console.log(`Parsing STL file, buffer size: ${buffer.byteLength} bytes`)
 
@@ -21,7 +21,7 @@ function parseSTL(buffer: ArrayBuffer) {
 
   console.log("Detected binary STL format")
 
-  // Parse binary STL with bounds checking
+  // Parse binary STL with corruption detection
   if (buffer.byteLength < 84) {
     throw new Error("Binary STL file too small (minimum 84 bytes required)")
   }
@@ -33,24 +33,55 @@ function parseSTL(buffer: ArrayBuffer) {
   const triangleCount = view.getUint32(offset, true)
   offset += 4
 
-  console.log(`Binary STL: ${triangleCount} triangles expected`)
+  console.log(`Binary STL: ${triangleCount} triangles claimed in header`)
+
+  // Sanity check for triangle count
+  if (triangleCount > 10000000) {
+    // 10 million triangles max
+    throw new Error(
+      `Unrealistic triangle count: ${triangleCount}. File may be corrupted. Try converting to ASCII STL format.`,
+    )
+  }
+
+  if (triangleCount === 0) {
+    throw new Error("STL file claims to have 0 triangles")
+  }
 
   // Calculate expected file size: 80 (header) + 4 (count) + triangles * 50 bytes each
   const expectedSize = 84 + triangleCount * 50
+
+  // If file size doesn't match, it's likely corrupted
   if (buffer.byteLength < expectedSize) {
-    throw new Error(`Binary STL file size mismatch. Expected ${expectedSize} bytes, got ${buffer.byteLength} bytes`)
+    console.warn(`Binary STL size mismatch. Expected ${expectedSize} bytes, got ${buffer.byteLength} bytes`)
+
+    // Try to salvage what we can by calculating actual triangle count from file size
+    const actualTriangleCount = Math.floor((buffer.byteLength - 84) / 50)
+    console.log(`Attempting to read ${actualTriangleCount} triangles based on actual file size`)
+
+    if (actualTriangleCount <= 0) {
+      throw new Error("File too small to contain any triangles")
+    }
+
+    return parseBinarySTLWithCount(buffer, actualTriangleCount)
   }
 
-  if (triangleCount > 1000000) {
-    throw new Error(`Too many triangles: ${triangleCount}. Maximum supported is 1,000,000`)
-  }
+  // File size matches, proceed normally
+  return parseBinarySTLWithCount(buffer, triangleCount)
+}
 
+// Helper function to parse binary STL with a specific triangle count
+function parseBinarySTLWithCount(buffer: ArrayBuffer, triangleCount: number) {
+  const view = new DataView(buffer)
+  let offset = 84 // Skip header and count
   const vertices: number[] = []
+
+  console.log(`Parsing ${triangleCount} triangles from binary STL`)
 
   for (let i = 0; i < triangleCount; i++) {
     // Check bounds before reading
     if (offset + 50 > buffer.byteLength) {
-      throw new Error(`Unexpected end of file at triangle ${i}. Offset ${offset}, buffer size ${buffer.byteLength}`)
+      console.warn(`Reached end of file at triangle ${i}. Stopping parsing.`)
+      break
     }
 
     // Skip normal (3 floats = 12 bytes)
@@ -59,7 +90,8 @@ function parseSTL(buffer: ArrayBuffer) {
     // Read 3 vertices (9 floats total = 36 bytes)
     for (let j = 0; j < 3; j++) {
       if (offset + 12 > buffer.byteLength) {
-        throw new Error(`Unexpected end of file reading vertex ${j} of triangle ${i}`)
+        console.warn(`Unexpected end of file reading vertex ${j} of triangle ${i}`)
+        break
       }
 
       const x = view.getFloat32(offset, true)
@@ -80,19 +112,32 @@ function parseSTL(buffer: ArrayBuffer) {
     offset += 2
   }
 
-  console.log(`Successfully parsed ${triangleCount} triangles, ${vertices.length / 3} vertices`)
-  return { vertices, triangleCount }
+  const actualTriangles = vertices.length / 9
+  console.log(`Successfully parsed ${actualTriangles} triangles, ${vertices.length / 3} vertices`)
+
+  if (vertices.length === 0) {
+    throw new Error("No valid vertices found in STL file")
+  }
+
+  return { vertices, triangleCount: actualTriangles }
 }
 
-// More robust ASCII STL parser
+// Enhanced ASCII STL parser with better detection
 function parseASCIISTL(buffer: ArrayBuffer) {
   try {
     const text = new TextDecoder().decode(buffer)
+
+    // Check if this is actually an ASCII STL
+    if (!text.includes("solid") || !text.includes("facet") || !text.includes("vertex")) {
+      throw new Error("File does not appear to be a valid ASCII STL")
+    }
+
     const lines = text.split(/\r?\n/) // Handle both \n and \r\n
 
     const vertices: number[] = []
     let triangleCount = 0
     let inSolid = false
+    let inFacet = false
 
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
       const line = lines[lineNum].trim()
@@ -109,7 +154,18 @@ function parseASCIISTL(buffer: ArrayBuffer) {
 
       if (!inSolid) continue
 
-      if (line.startsWith("vertex")) {
+      if (line.startsWith("facet")) {
+        inFacet = true
+        continue
+      }
+
+      if (line === "endfacet") {
+        inFacet = false
+        triangleCount++
+        continue
+      }
+
+      if (inFacet && line.startsWith("vertex")) {
         const parts = line.split(/\s+/)
         if (parts.length >= 4) {
           const x = Number.parseFloat(parts[1])
@@ -122,8 +178,6 @@ function parseASCIISTL(buffer: ArrayBuffer) {
             console.warn(`Invalid vertex on line ${lineNum + 1}: ${line}`)
           }
         }
-      } else if (line === "endfacet") {
-        triangleCount++
       }
     }
 
