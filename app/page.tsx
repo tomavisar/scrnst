@@ -7,19 +7,42 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Download } from "lucide-react"
+import { Download, AlertCircle, CheckCircle } from "lucide-react"
 
 export default function APITestPage() {
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [screenshots, setScreenshots] = useState<string[]>([])
   const [error, setError] = useState<string>("")
+  const [response, setResponse] = useState<any>(null)
+  const [apiHealth, setApiHealth] = useState<string>("")
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
     if (selectedFile) {
       setFile(selectedFile)
       setError("")
+    }
+  }
+
+  const checkHealth = async () => {
+    try {
+      const response = await fetch("/api/health")
+      const result = await response.json()
+      setApiHealth(`API Health: ${result.status} (${result.timestamp})`)
+    } catch (err) {
+      setApiHealth(`API Health: Error - ${err}`)
+    }
+  }
+
+  const testGET = async () => {
+    try {
+      const response = await fetch("/api/screenshot-stl")
+      const result = await response.json()
+      setResponse(result)
+      setError("")
+    } catch (err) {
+      setError("GET test failed: " + (err instanceof Error ? err.message : "Unknown error"))
     }
   }
 
@@ -32,17 +55,33 @@ export default function APITestPage() {
     setLoading(true)
     setError("")
     setScreenshots([])
+    setResponse(null)
 
     try {
       const formData = new FormData()
       formData.append("stl", file)
+
+      console.log("Sending request to API...")
 
       const response = await fetch("/api/screenshot-stl", {
         method: "POST",
         body: formData,
       })
 
+      console.log("Response status:", response.status)
+      console.log("Response headers:", response.headers)
+
+      // Check if response is JSON
+      const contentType = response.headers.get("content-type")
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text()
+        throw new Error(`Server returned non-JSON response: ${text.substring(0, 200)}...`)
+      }
+
       const result = await response.json()
+      console.log("Response data:", result)
+
+      setResponse(result)
 
       if (result.success) {
         setScreenshots(result.screenshots)
@@ -50,7 +89,8 @@ export default function APITestPage() {
         setError(result.error || "Failed to process file")
       }
     } catch (err) {
-      setError("Network error: " + (err instanceof Error ? err.message : "Unknown error"))
+      console.error("API test error:", err)
+      setError("API Error: " + (err instanceof Error ? err.message : "Unknown error"))
     } finally {
       setLoading(false)
     }
@@ -70,42 +110,59 @@ export default function APITestPage() {
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>API Information</CardTitle>
+            <CardTitle>API Status</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <p>
-              <strong>Endpoint:</strong> <code>/api/screenshot-stl</code>
-            </p>
-            <p>
-              <strong>Method:</strong> POST
-            </p>
-            <p>
-              <strong>Content-Type:</strong> multipart/form-data
-            </p>
-            <p>
-              <strong>Field Name:</strong> "stl"
-            </p>
-            <p>
-              <strong>Output:</strong> JSON with 16 base64 PNG images
-            </p>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <Button onClick={checkHealth} variant="outline" size="sm">
+                Check Health
+              </Button>
+              <Button onClick={testGET} variant="outline" size="sm">
+                Test GET
+              </Button>
+            </div>
+            {apiHealth && <div className="text-sm bg-gray-100 p-2 rounded">{apiHealth}</div>}
+            {response && (
+              <div className="text-sm bg-blue-50 p-2 rounded">
+                <strong>API Response:</strong>
+                <pre className="mt-1 text-xs overflow-auto">{JSON.stringify(response, null, 2)}</pre>
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Test the API</CardTitle>
+            <CardTitle>Test File Upload</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
               <Label htmlFor="stl-file">Upload STL File</Label>
               <Input id="stl-file" type="file" accept=".stl" onChange={handleFileChange} />
+              {file && (
+                <div className="text-sm text-gray-600 mt-1">
+                  Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                </div>
+              )}
             </div>
 
             <Button onClick={testAPI} disabled={!file || loading} className="w-full">
-              {loading ? "Processing..." : "Generate Screenshots"}
+              {loading ? "Processing..." : "Test API"}
             </Button>
 
-            {error && <div className="text-red-600 text-sm">{error}</div>}
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded">
+                <AlertCircle className="w-4 h-4" />
+                {error}
+              </div>
+            )}
+
+            {screenshots.length > 0 && (
+              <div className="flex items-center gap-2 text-green-600 text-sm bg-green-50 p-3 rounded">
+                <CheckCircle className="w-4 h-4" />
+                Successfully generated {screenshots.length} screenshots
+              </div>
+            )}
           </CardContent>
         </Card>
 
