@@ -1,17 +1,45 @@
 "use client"
 
-import { forwardRef, useImperativeHandle, useRef, useEffect } from "react"
-import { Canvas, useThree, useLoader } from "@react-three/fiber"
+import { forwardRef, useImperativeHandle, useRef, useEffect, useState } from "react"
+import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls, PerspectiveCamera, Environment } from "@react-three/drei"
-import { STLLoader } from "three/examples/jsm/loaders/STLLoader"
-import * as THREE from "three"
 
 interface StlModelProps {
   stlUrl: string
 }
 
 const StlModel = ({ stlUrl }: StlModelProps) => {
-  const geometry = useLoader(STLLoader, stlUrl)
+  const [geometry, setGeometry] = useState<any>(null)
+
+  useEffect(() => {
+    const loadSTL = async () => {
+      try {
+        // Dynamic import of STLLoader
+        const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js")
+        const loader = new STLLoader()
+
+        const response = await fetch(stlUrl)
+        const arrayBuffer = await response.arrayBuffer()
+        const loadedGeometry = loader.parse(arrayBuffer)
+        setGeometry(loadedGeometry)
+      } catch (error) {
+        console.error("Error loading STL:", error)
+      }
+    }
+
+    if (stlUrl) {
+      loadSTL()
+    }
+  }, [stlUrl])
+
+  if (!geometry) {
+    return (
+      <mesh>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#808080" />
+      </mesh>
+    )
+  }
 
   return (
     <mesh>
@@ -26,7 +54,8 @@ const SceneCapture = forwardRef(({ stlUrl }: StlModelProps, ref) => {
   const controlsRef = useRef(null)
 
   // Calculate bounding box to position camera correctly
-  const calculateBoundingBox = () => {
+  const calculateBoundingBox = async () => {
+    const THREE = await import("three")
     const box = new THREE.Box3().setFromObject(scene)
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())
@@ -35,10 +64,10 @@ const SceneCapture = forwardRef(({ stlUrl }: StlModelProps, ref) => {
   }
 
   // Position camera at a specific point looking at the center
-  const positionCamera = (positionData: { position: THREE.Vector3; label: string }) => {
+  const positionCamera = async (positionData: { position: any; label: string }) => {
     if (!controlsRef.current) return
 
-    const { center } = calculateBoundingBox()
+    const { center } = await calculateBoundingBox()
 
     camera.position.copy(positionData.position)
     camera.lookAt(center)
@@ -63,12 +92,13 @@ const SceneCapture = forwardRef(({ stlUrl }: StlModelProps, ref) => {
   }
 
   // Generate camera positions for all corners and sides
-  const generateCameraPositions = () => {
-    const { size, center } = calculateBoundingBox()
+  const generateCameraPositions = async () => {
+    const THREE = await import("three")
+    const { size, center } = await calculateBoundingBox()
     const maxDim = Math.max(size.x, size.y, size.z) * 2
 
     // Create an array to hold all camera positions with labels
-    const positions: Array<{ position: THREE.Vector3; label: string }> = []
+    const positions: Array<{ position: any; label: string }> = []
 
     // 8 corners of the bounding cube
     positions.push({
@@ -147,10 +177,10 @@ const SceneCapture = forwardRef(({ stlUrl }: StlModelProps, ref) => {
   useImperativeHandle(ref, () => ({
     async captureScreenshots() {
       const result: Array<{ image: string; label: string }> = []
-      const cameraPositions = generateCameraPositions()
+      const cameraPositions = await generateCameraPositions()
 
       for (const positionData of cameraPositions) {
-        positionCamera(positionData)
+        await positionCamera(positionData)
         // Add a small delay to ensure the camera has updated
         await new Promise((resolve) => setTimeout(resolve, 100))
         const screenshot = await captureScreenshot()
@@ -201,8 +231,6 @@ const StlViewer = forwardRef<unknown, StlViewerProps>(({ stlUrl }, ref) => {
     </Canvas>
   )
 })
-
-// Expose the capture method globally for Puppeteer access
 
 StlViewer.displayName = "StlViewer"
 
