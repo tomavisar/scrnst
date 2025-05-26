@@ -41,7 +41,6 @@
     "@react-three/fiber": "latest",
     "@vercel/blob": "latest",
     "autoprefixer": "^10.4.20",
-    "canvas": "latest",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "1.0.4",
