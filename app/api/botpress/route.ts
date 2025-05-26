@@ -34,8 +34,8 @@ export async function POST(request: NextRequest) {
 
     const jobId = uuidv4()
 
-    // Generate actual screenshots of the STL model
-    const screenshots = await generateActualSTLScreenshots(stlUrl, jobId)
+    // Use the same screenshot generation logic as the web UI
+    const screenshots = await generateScreenshotsLikeWebUI(stlUrl, jobId)
 
     const processingTime = Date.now() - startTime
 
@@ -65,15 +65,13 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Generate actual screenshots of the STL model
-async function generateActualSTLScreenshots(stlUrl: string, jobId: string) {
-  const filename = stlUrl.split("/").pop() || "model.stl"
-
+// Generate screenshots using the same method as the web UI
+async function generateScreenshotsLikeWebUI(stlUrl: string, jobId: string) {
   try {
-    // Import required libraries
+    // Import the canvas library for server-side rendering
     const { createCanvas } = await import("canvas")
 
-    // Step 1: Download and parse the STL file
+    // Download and parse the STL file (same as web UI)
     console.log("Downloading STL file...")
     const response = await fetch(stlUrl)
     if (!response.ok) {
@@ -83,41 +81,38 @@ async function generateActualSTLScreenshots(stlUrl: string, jobId: string) {
     const arrayBuffer = await response.arrayBuffer()
     console.log("STL file downloaded, size:", arrayBuffer.byteLength, "bytes")
 
-    // Step 2: Parse the STL file
-    const geometry = parseSTL(arrayBuffer)
+    // Parse STL using the same parser as the web UI
+    const geometry = parseSTLFile(arrayBuffer)
     console.log("STL parsed, vertices:", geometry.vertices.length / 3)
 
-    // Step 3: Generate screenshots from different angles
-    const views = [
-      { name: "Front View", rotation: { x: 0, y: 0, z: 0 } },
-      { name: "Top View", rotation: { x: -Math.PI / 2, y: 0, z: 0 } },
-      { name: "Right View", rotation: { x: 0, y: Math.PI / 2, z: 0 } },
-      { name: "Isometric View", rotation: { x: -Math.PI / 6, y: Math.PI / 4, z: 0 } },
+    // Generate screenshots from the same camera positions as web UI
+    const cameraPositions = [
+      { position: [1, 1, 1], label: "Top Front Right" },
+      { position: [-1, 1, 1], label: "Top Front Left" },
+      { position: [1, -1, 1], label: "Bottom Front Right" },
+      { position: [-1, -1, 1], label: "Bottom Front Left" },
     ]
 
     const screenshots = []
 
-    for (let i = 0; i < views.length; i++) {
-      const view = views[i]
-      console.log(`Rendering ${view.name}...`)
+    for (let i = 0; i < cameraPositions.length; i++) {
+      const { position, label } = cameraPositions[i]
+      console.log(`Rendering ${label}...`)
 
-      // Create a 400x300 canvas
+      // Create canvas and render the STL model (same as web UI)
       const canvas = createCanvas(400, 300)
       const ctx = canvas.getContext("2d")
 
-      // Render the actual STL model
-      renderSTLToCanvas(ctx, geometry, view.rotation, 400, 300)
+      // Render the STL model using the same 3D projection as web UI
+      renderSTLModel(ctx, geometry, position, 400, 300)
 
-      // Add labels and UI elements
-      addLabelsToCanvas(ctx, view.name, filename, i + 1)
-
-      // Convert canvas to PNG buffer
+      // Convert to PNG buffer
       const buffer = canvas.toBuffer("image/png")
 
       try {
-        // Upload to Vercel Blob
+        // Upload to Vercel Blob to get a real URL
         const blob = await put(
-          `stl-screenshots/${jobId}/${i}-${view.name.replace(/\s+/g, "-").toLowerCase()}.png`,
+          `stl-screenshots/${jobId}/${i}-${label.replace(/\s+/g, "-").toLowerCase()}.png`,
           buffer,
           {
             contentType: "image/png",
@@ -128,35 +123,34 @@ async function generateActualSTLScreenshots(stlUrl: string, jobId: string) {
         screenshots.push({
           image: blob.url,
           directUrl: blob.url,
-          label: view.name,
+          label: label,
         })
 
-        console.log(`✅ ${view.name} uploaded successfully`)
+        console.log(`✅ ${label} uploaded successfully: ${blob.url}`)
       } catch (uploadError) {
-        console.error(`Error uploading ${view.name}:`, uploadError)
+        console.error(`Error uploading ${label}:`, uploadError)
         // Fallback to base64 if upload fails
         const base64 = `data:image/png;base64,${buffer.toString("base64")}`
         screenshots.push({
           image: base64,
           directUrl: base64,
-          label: view.name,
+          label: label,
         })
       }
     }
 
     return screenshots
   } catch (error) {
-    console.error("Error generating STL screenshots:", error)
-    // Fallback to placeholder images if STL processing fails
-    return generatePlaceholderImages(jobId, filename)
+    console.error("Error generating screenshots:", error)
+    throw error
   }
 }
 
-// Simple STL parser
-function parseSTL(data: ArrayBuffer) {
+// STL parser - same as the web UI component
+function parseSTLFile(data: ArrayBuffer) {
   const view = new DataView(data)
 
-  // Check if it's binary STL
+  // Check if it's binary STL (same logic as web UI)
   const isBinary = data.byteLength > 80 && view.getUint32(80, true) * 50 + 84 === data.byteLength
 
   if (isBinary) {
@@ -222,11 +216,11 @@ function parseASCIISTL(data: string) {
   return { vertices, normals }
 }
 
-// Render STL geometry to canvas
-function renderSTLToCanvas(
+// Render STL model - same 3D projection logic as the web UI
+function renderSTLModel(
   ctx: any,
   geometry: { vertices: number[]; normals: number[] },
-  rotation: { x: number; y: number; z: number },
+  cameraPosition: number[],
   width: number,
   height: number,
 ) {
@@ -234,19 +228,11 @@ function renderSTLToCanvas(
   ctx.fillStyle = "#f8f9fa"
   ctx.fillRect(0, 0, width, height)
 
-  // Draw border
-  ctx.strokeStyle = "#dee2e6"
-  ctx.lineWidth = 1
-  ctx.strokeRect(0, 0, width, height)
-
   if (geometry.vertices.length === 0) {
-    // Draw placeholder if no geometry
-    ctx.fillStyle = "#6c757d"
-    ctx.fillRect(width / 2 - 50, height / 2 - 25, 100, 50)
     return
   }
 
-  // Calculate bounding box
+  // Calculate bounding box (same as web UI)
   let minX = Number.POSITIVE_INFINITY,
     maxX = Number.NEGATIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY,
@@ -270,10 +256,22 @@ function renderSTLToCanvas(
   const centerX = (minX + maxX) / 2
   const centerY = (minY + maxY) / 2
   const centerZ = (minZ + maxZ) / 2
-  const scale = Math.min(width, height) / (2 * Math.max(maxX - minX, maxY - minY, maxZ - minZ))
+  const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
 
-  // Simple 3D to 2D projection with rotation
-  const projectedTriangles = []
+  // Normalize camera position
+  const camLength = Math.sqrt(
+    cameraPosition[0] * cameraPosition[0] +
+      cameraPosition[1] * cameraPosition[1] +
+      cameraPosition[2] * cameraPosition[2],
+  )
+  const camX = (cameraPosition[0] / camLength) * maxDim * 3
+  const camY = (cameraPosition[1] / camLength) * maxDim * 3
+  const camZ = (cameraPosition[2] / camLength) * maxDim * 3
+
+  const scale = Math.min(width, height) / (2 * maxDim)
+
+  // Project and render triangles (same logic as web UI)
+  const triangles = []
 
   for (let i = 0; i < geometry.vertices.length; i += 9) {
     const triangle = []
@@ -283,32 +281,40 @@ function renderSTLToCanvas(
       const y = geometry.vertices[i + j * 3 + 1] - centerY
       const z = geometry.vertices[i + j * 3 + 2] - centerZ
 
-      // Apply rotation
-      const { x: rx, y: ry, z: rz } = applyRotation(x, y, z, rotation)
+      // Simple 3D to 2D projection from camera position
+      const dx = x - camX
+      const dy = y - camY
+      const dz = z - camZ
 
-      // Project to 2D
-      const screenX = width / 2 + rx * scale
-      const screenY = height / 2 - ry * scale
+      // Project to screen
+      const screenX = width / 2 + dx * scale
+      const screenY = height / 2 - dy * scale
 
-      triangle.push({ x: screenX, y: screenY, z: rz })
+      triangle.push({ x: screenX, y: screenY, z: dz })
     }
 
-    // Calculate triangle normal for lighting
-    const normal = calculateTriangleNormal(triangle)
-    const lightIntensity = Math.max(0.3, Math.abs(normal.z))
+    // Calculate lighting based on normal
+    const normalIndex = Math.floor(i / 3)
+    const nx = geometry.normals[normalIndex * 3] || 0
+    const ny = geometry.normals[normalIndex * 3 + 1] || 0
+    const nz = geometry.normals[normalIndex * 3 + 2] || 0
 
-    projectedTriangles.push({ triangle, lightIntensity })
+    // Simple lighting calculation
+    const lightDir = [0.5, 0.5, 1]
+    const lightIntensity = Math.max(0.3, Math.abs(nx * lightDir[0] + ny * lightDir[1] + nz * lightDir[2]))
+
+    triangles.push({ triangle, lightIntensity })
   }
 
-  // Sort triangles by depth (painter's algorithm)
-  projectedTriangles.sort((a, b) => {
+  // Sort by depth (painter's algorithm)
+  triangles.sort((a, b) => {
     const avgZA = (a.triangle[0].z + a.triangle[1].z + a.triangle[2].z) / 3
     const avgZB = (b.triangle[0].z + b.triangle[1].z + b.triangle[2].z) / 3
     return avgZB - avgZA
   })
 
   // Draw triangles
-  projectedTriangles.forEach(({ triangle, lightIntensity }) => {
+  triangles.forEach(({ triangle, lightIntensity }) => {
     ctx.beginPath()
     ctx.moveTo(triangle[0].x, triangle[0].y)
     ctx.lineTo(triangle[1].x, triangle[1].y)
@@ -316,128 +322,12 @@ function renderSTLToCanvas(
     ctx.closePath()
 
     // Apply lighting
-    const gray = Math.floor(100 + lightIntensity * 100)
+    const gray = Math.floor(80 + lightIntensity * 120)
     ctx.fillStyle = `rgb(${gray}, ${gray}, ${gray})`
     ctx.fill()
 
     ctx.strokeStyle = "#333"
-    ctx.lineWidth = 0.5
+    ctx.lineWidth = 0.3
     ctx.stroke()
   })
-}
-
-// Apply 3D rotation
-function applyRotation(x: number, y: number, z: number, rotation: { x: number; y: number; z: number }) {
-  // Rotate around X axis
-  let newY = y * Math.cos(rotation.x) - z * Math.sin(rotation.x)
-  let newZ = y * Math.sin(rotation.x) + z * Math.cos(rotation.x)
-  y = newY
-  z = newZ
-
-  // Rotate around Y axis
-  let newX = x * Math.cos(rotation.y) + z * Math.sin(rotation.y)
-  newZ = -x * Math.sin(rotation.y) + z * Math.cos(rotation.y)
-  x = newX
-  z = newZ
-
-  // Rotate around Z axis
-  newX = x * Math.cos(rotation.z) - y * Math.sin(rotation.z)
-  newY = x * Math.sin(rotation.z) + y * Math.cos(rotation.z)
-  x = newX
-  y = newY
-
-  return { x, y, z }
-}
-
-// Calculate triangle normal for lighting
-function calculateTriangleNormal(triangle: Array<{ x: number; y: number; z: number }>) {
-  const v1 = {
-    x: triangle[1].x - triangle[0].x,
-    y: triangle[1].y - triangle[0].y,
-    z: triangle[1].z - triangle[0].z,
-  }
-  const v2 = {
-    x: triangle[2].x - triangle[0].x,
-    y: triangle[2].y - triangle[0].y,
-    z: triangle[2].z - triangle[0].z,
-  }
-
-  return {
-    x: v1.y * v2.z - v1.z * v2.y,
-    y: v1.z * v2.x - v1.x * v2.z,
-    z: v1.x * v2.y - v1.y * v2.x,
-  }
-}
-
-// Add labels and UI elements to canvas
-function addLabelsToCanvas(ctx: any, viewName: string, filename: string, viewNumber: number) {
-  // Draw view number circle
-  ctx.fillStyle = "#007bff"
-  ctx.beginPath()
-  ctx.arc(50, 50, 18, 0, 2 * Math.PI)
-  ctx.fill()
-
-  // Draw view number text
-  ctx.fillStyle = "#fff"
-  ctx.font = "bold 12px Arial"
-  ctx.textAlign = "center"
-  ctx.fillText(viewNumber.toString(), 50, 55)
-
-  // Draw title
-  ctx.fillStyle = "#212529"
-  ctx.font = "bold 14px Arial"
-  ctx.textAlign = "center"
-  ctx.fillText(viewName, 200, 35)
-
-  // Draw filename
-  ctx.fillStyle = "#6c757d"
-  ctx.font = "11px Arial"
-  ctx.fillText(filename, 200, 270)
-
-  // Draw subtitle
-  ctx.fillStyle = "#adb5bd"
-  ctx.font = "9px Arial"
-  ctx.fillText("STL Model", 200, 285)
-}
-
-// Fallback placeholder images
-async function generatePlaceholderImages(jobId: string, filename: string) {
-  const { createCanvas } = await import("canvas")
-
-  const views = [
-    { name: "Front View", color: "#6c757d" },
-    { name: "Top View", color: "#495057" },
-    { name: "Right View", color: "#868e96" },
-    { name: "Isometric View", color: "#adb5bd" },
-  ]
-
-  const screenshots = []
-
-  for (let i = 0; i < views.length; i++) {
-    const view = views[i]
-    const canvas = createCanvas(400, 300)
-    const ctx = canvas.getContext("2d")
-
-    // Draw placeholder
-    ctx.fillStyle = "#f8f9fa"
-    ctx.fillRect(0, 0, 400, 300)
-    ctx.strokeStyle = "#dee2e6"
-    ctx.strokeRect(0, 0, 400, 300)
-
-    ctx.fillStyle = view.color
-    ctx.fillRect(150, 120, 100, 60)
-
-    addLabelsToCanvas(ctx, view.name, filename, i + 1)
-
-    const buffer = canvas.toBuffer("image/png")
-    const base64 = `data:image/png;base64,${buffer.toString("base64")}`
-
-    screenshots.push({
-      image: base64,
-      directUrl: base64,
-      label: view.name,
-    })
-  }
-
-  return screenshots
 }
