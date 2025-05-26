@@ -1,30 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server"
-import * as THREE from "three"
-import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js"
-import gl from "gl"
-
-// Create a headless WebGL context
-function createHeadlessRenderer(width: number, height: number) {
-  const context = gl(width, height, { preserveDrawingBuffer: true })
-
-  const renderer = new THREE.WebGLRenderer({
-    context: context as any,
-    antialias: true,
-    alpha: true,
-    preserveDrawingBuffer: true,
-  })
-
-  renderer.setSize(width, height)
-  renderer.setClearColor(0xffffff, 1)
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
-
-  return renderer
-}
+import puppeteer from "puppeteer"
 
 // Generate 16 camera positions around a sphere
 function generateCameraPositions(radius = 5) {
-  const positions: THREE.Vector3[] = []
+  const positions: Array<{ x: number; y: number; z: number }> = []
 
   // 4 elevation levels
   const elevations = [0, Math.PI / 6, Math.PI / 3, Math.PI / 2]
@@ -40,50 +19,128 @@ function generateCameraPositions(radius = 5) {
       const y = radius * Math.sin(elevation)
       const z = radius * Math.cos(elevation) * Math.sin(azimuth)
 
-      positions.push(new THREE.Vector3(x, y, z))
+      positions.push({ x, y, z })
     }
   })
 
   // Add bottom view
-  positions.push(new THREE.Vector3(0, -radius, 0))
+  positions.push({ x: 0, y: -radius, z: 0 })
 
   return positions.slice(0, 16) // Ensure exactly 16 positions
 }
 
-// Load and process STL file
-async function loadSTLGeometry(buffer: ArrayBuffer): Promise<THREE.BufferGeometry> {
-  const loader = new STLLoader()
-  return new Promise((resolve, reject) => {
-    try {
-      const geometry = loader.parse(buffer)
-      resolve(geometry)
-    } catch (error) {
-      reject(error)
-    }
-  })
-}
+// Create HTML page for rendering 3D model
+function createRenderHTML(stlData: string, cameraPositions: Array<{ x: number; y: number; z: number }>) {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { margin: 0; background: white; }
+        canvas { display: block; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+</head>
+<body>
+    <canvas id="canvas" width="512" height="512"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const renderer = new THREE.WebGLRenderer({ 
+            canvas: canvas, 
+            antialias: true, 
+            preserveDrawingBuffer: true 
+        });
+        renderer.setSize(512, 512);
+        renderer.setClearColor(0xffffff, 1);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-// Render scene from a specific camera position
-function renderScene(
-  renderer: THREE.WebGLRenderer,
-  scene: THREE.Scene,
-  camera: THREE.PerspectiveCamera,
-  cameraPosition: THREE.Vector3,
-): string {
-  // Position camera
-  camera.position.copy(cameraPosition)
-  camera.lookAt(0, 0, 0)
-  camera.updateMatrixWorld()
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
 
-  // Render
-  renderer.render(scene, camera)
+        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
 
-  // Get image data
-  const canvas = renderer.domElement
-  return canvas.toDataURL("image/png")
+        // Add lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 10, 5);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        fillLight.position.set(-10, -10, -5);
+        scene.add(fillLight);
+
+        // Load STL
+        const loader = new THREE.STLLoader();
+        const stlData = "${stlData}";
+        const binaryString = atob(stlData);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        const geometry = loader.parse(bytes.buffer);
+        
+        // Center and scale geometry
+        geometry.computeBoundingBox();
+        const boundingBox = geometry.boundingBox;
+        const center = boundingBox.getCenter(new THREE.Vector3());
+        const size = boundingBox.getSize(new THREE.Vector3());
+        const maxDimension = Math.max(size.x, size.y, size.z);
+
+        geometry.translate(-center.x, -center.y, -center.z);
+        geometry.scale(2 / maxDimension, 2 / maxDimension, 2 / maxDimension);
+
+        const material = new THREE.MeshPhongMaterial({
+            color: 0x888888,
+            shininess: 100,
+            side: THREE.DoubleSide,
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+
+        const cameraPositions = ${JSON.stringify(cameraPositions)};
+        let currentIndex = 0;
+        const screenshots = [];
+
+        function captureScreenshot() {
+            if (currentIndex >= cameraPositions.length) {
+                window.screenshots = screenshots;
+                return;
+            }
+
+            const pos = cameraPositions[currentIndex];
+            camera.position.set(pos.x, pos.y, pos.z);
+            camera.lookAt(0, 0, 0);
+            camera.updateMatrixWorld();
+
+            renderer.render(scene, camera);
+            
+            const dataUrl = canvas.toDataURL('image/png');
+            screenshots.push(dataUrl);
+            
+            currentIndex++;
+            setTimeout(captureScreenshot, 100);
+        }
+
+        // Start capturing after a short delay
+        setTimeout(captureScreenshot, 500);
+    </script>
+</body>
+</html>`
 }
 
 export async function POST(request: NextRequest) {
+  let browser
+
   try {
     const formData = await request.formData()
     const file = formData.get("stl") as File
@@ -96,77 +153,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "File must be an STL file" }, { status: 400 })
     }
 
-    // Convert file to ArrayBuffer
+    // Convert file to base64
     const arrayBuffer = await file.arrayBuffer()
-
-    // Load STL geometry
-    const geometry = await loadSTLGeometry(arrayBuffer)
-
-    // Center and scale the geometry
-    geometry.computeBoundingBox()
-    const boundingBox = geometry.boundingBox!
-    const center = boundingBox.getCenter(new THREE.Vector3())
-    const size = boundingBox.getSize(new THREE.Vector3())
-    const maxDimension = Math.max(size.x, size.y, size.z)
-
-    geometry.translate(-center.x, -center.y, -center.z)
-    geometry.scale(2 / maxDimension, 2 / maxDimension, 2 / maxDimension)
-
-    // Create scene
-    const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0xffffff)
-
-    // Create material
-    const material = new THREE.MeshPhongMaterial({
-      color: 0x888888,
-      shininess: 100,
-      side: THREE.DoubleSide,
-    })
-
-    // Create mesh
-    const mesh = new THREE.Mesh(geometry, material)
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    scene.add(mesh)
-
-    // Add lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.4)
-    scene.add(ambientLight)
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
-    directionalLight.position.set(10, 10, 5)
-    directionalLight.castShadow = true
-    directionalLight.shadow.mapSize.width = 2048
-    directionalLight.shadow.mapSize.height = 2048
-    scene.add(directionalLight)
-
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.3)
-    fillLight.position.set(-10, -10, -5)
-    scene.add(fillLight)
-
-    // Create renderer
-    const width = 512
-    const height = 512
-    const renderer = createHeadlessRenderer(width, height)
-
-    // Create camera
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000)
+    const base64Data = Buffer.from(arrayBuffer).toString("base64")
 
     // Generate camera positions
     const cameraPositions = generateCameraPositions(5)
 
-    // Render screenshots
-    const screenshots: string[] = []
+    // Create HTML for rendering
+    const html = createRenderHTML(base64Data, cameraPositions)
 
-    for (let i = 0; i < cameraPositions.length; i++) {
-      const dataUrl = renderScene(renderer, scene, camera, cameraPositions[i])
-      screenshots.push(dataUrl)
-    }
+    // Launch Puppeteer
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    })
 
-    // Clean up
-    renderer.dispose()
-    geometry.dispose()
-    material.dispose()
+    const page = await browser.newPage()
+    await page.setViewport({ width: 512, height: 512 })
+
+    // Set content and wait for rendering
+    await page.setContent(html)
+
+    // Wait for screenshots to be captured
+    await page.waitForFunction(() => window.screenshots && window.screenshots.length === 16, {
+      timeout: 30000,
+    })
+
+    // Get screenshots
+    const screenshots = await page.evaluate(() => window.screenshots)
+
+    await browser.close()
 
     return NextResponse.json({
       success: true,
@@ -175,9 +192,16 @@ export async function POST(request: NextRequest) {
       filename: file.name,
     })
   } catch (error) {
+    if (browser) {
+      await browser.close()
+    }
+
     console.error("Error processing STL file:", error)
     return NextResponse.json(
-      { error: "Failed to process STL file", details: error instanceof Error ? error.message : "Unknown error" },
+      {
+        error: "Failed to process STL file",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     )
   }
