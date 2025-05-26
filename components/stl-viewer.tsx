@@ -1,6 +1,6 @@
 "use client"
 
-import { forwardRef, useImperativeHandle, useRef } from "react"
+import { forwardRef, useImperativeHandle, useRef, useEffect } from "react"
 import { Canvas, useThree, useLoader } from "@react-three/fiber"
 import { OrbitControls, PerspectiveCamera, Environment } from "@react-three/drei"
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader"
@@ -183,12 +183,26 @@ interface StlViewerProps {
 }
 
 const StlViewer = forwardRef<unknown, StlViewerProps>(({ stlUrl }, ref) => {
+  useEffect(() => {
+    if (ref && typeof ref === "object" && "current" in ref) {
+      ;(window as any).stlViewerRef = ref.current
+    }
+
+    return () => {
+      if ((window as any).stlViewerRef) {
+        delete (window as any).stlViewerRef
+      }
+    }
+  }, [ref])
+
   return (
     <Canvas shadows gl={{ preserveDrawingBuffer: true }} className="w-full h-full">
       <SceneCapture ref={ref} stlUrl={stlUrl} />
     </Canvas>
   )
 })
+
+// Expose the capture method globally for Puppeteer access
 
 StlViewer.displayName = "StlViewer"
 
