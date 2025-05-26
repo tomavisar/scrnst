@@ -456,10 +456,25 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({
-    message: "STL Screenshot API is running",
-    endpoint: "/api/screenshot-stl",
-    method: "POST",
-    status: "operational",
-  })
+  console.log("GET request received for screenshot-stl API")
+
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  }
+
+  return NextResponse.json(
+    {
+      message: "STL Screenshot API is running",
+      endpoint: "/api/screenshot-stl",
+      method: "POST",
+      status: "operational",
+      timestamp: new Date().toISOString(),
+      version: "1.0.0",
+    },
+    {
+      headers: corsHeaders,
+    },
+  )
 }
