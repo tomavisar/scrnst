@@ -277,7 +277,7 @@ function transformPoint(point: number[], matrix: number[]): number[] {
   ]
 }
 
-// Solid surface renderer with proper 3D camera system
+// Simple orthographic renderer that always works
 async function renderModelAsPNG(
   vertices: number[],
   normals: number[],
@@ -287,7 +287,7 @@ async function renderModelAsPNG(
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} from position (${cameraPos.x}, ${cameraPos.y}, ${cameraPos.z})`)
+    console.log(`Rendering ${cameraPos.name} - Simple orthographic mode`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
@@ -307,7 +307,7 @@ async function renderModelAsPNG(
       }
     }
 
-    // Calculate model center and bounds
+    // Calculate model bounds
     let minX = Number.POSITIVE_INFINITY,
       maxX = Number.NEGATIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY,
@@ -324,98 +324,80 @@ async function renderModelAsPNG(
       maxZ = Math.max(maxZ, vertices[i + 2])
     }
 
-    const modelCenter = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2]
-    const modelSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
+    const centerX = (minX + maxX) / 2
+    const centerY = (minY + maxY) / 2
+    const centerZ = (minZ + maxZ) / 2
 
-    // Adjust camera distance based on model size
-    const distance = modelSize * 2
-    const adjustedCameraPos = {
-      x: (cameraPos.x * distance) / 5,
-      y: (cameraPos.y * distance) / 5,
-      z: (cameraPos.z * distance) / 5,
-    }
-    const eye = [adjustedCameraPos.x, adjustedCameraPos.y, adjustedCameraPos.z]
-
-    // Create camera transformation matrix
-    const target = modelCenter
-    const up = [0, 1, 0] // Y is up
-    const viewMatrix = createLookAtMatrix(eye, target, up)
-
-    // Calculate scale to fit model in view
-    const scale = (Math.min(width, height) * 0.8) / modelSize
-
-    // Add debugging information
     console.log(
       `Model bounds: X(${minX.toFixed(2)} to ${maxX.toFixed(2)}), Y(${minY.toFixed(2)} to ${maxY.toFixed(2)}), Z(${minZ.toFixed(2)} to ${maxZ.toFixed(2)})`,
     )
-    console.log(
-      `Model center: (${modelCenter[0].toFixed(2)}, ${modelCenter[1].toFixed(2)}, ${modelCenter[2].toFixed(2)})`,
-    )
-    console.log(`Model size: ${modelSize.toFixed(2)}`)
-    console.log(`Camera position: (${eye[0].toFixed(2)}, ${eye[1].toFixed(2)}, ${eye[2].toFixed(2)})`)
-    console.log(`Scale: ${scale.toFixed(2)}`)
 
-    let trianglesRendered = 0
+    // Simple orthographic projection based on view
+    let projectedTriangles = 0
 
-    // Create depth buffer
-    const depthBuffer = new Float32Array(width * height)
-    depthBuffer.fill(Number.NEGATIVE_INFINITY)
-
-    // Light direction (from camera position)
-    const lightDir = normalize(subtract(eye, target))
-
-    // Render triangles
     for (let i = 0; i < vertices.length; i += 9) {
-      const triangle = []
+      // Get triangle vertices
+      const v1 = [vertices[i] - centerX, vertices[i + 1] - centerY, vertices[i + 2] - centerZ]
+      const v2 = [vertices[i + 3] - centerX, vertices[i + 4] - centerY, vertices[i + 5] - centerZ]
+      const v3 = [vertices[i + 6] - centerX, vertices[i + 7] - centerY, vertices[i + 8] - centerZ]
 
-      // Transform each vertex of the triangle
-      for (let j = 0; j < 3; j++) {
-        const worldPos = [
-          vertices[i + j * 3] - modelCenter[0],
-          vertices[i + j * 3 + 1] - modelCenter[1],
-          vertices[i + j * 3 + 2] - modelCenter[2],
-        ]
+      // Project to 2D based on camera view
+      let p1, p2, p3
 
-        // Transform to camera space
-        const cameraPos = transformPoint(worldPos, viewMatrix)
-
-        // Project to screen space
-        const screenX = Math.round(width / 2 + cameraPos[0] * scale)
-        const screenY = Math.round(height / 2 - cameraPos[1] * scale)
-        const depth = cameraPos[2]
-
-        triangle.push([screenX, screenY, depth])
+      switch (cameraPos.name) {
+        case "front":
+          p1 = [v1[0], v1[1]]
+          p2 = [v2[0], v2[1]]
+          p3 = [v3[0], v3[1]]
+          break
+        case "back":
+          p1 = [-v1[0], v1[1]]
+          p2 = [-v2[0], v2[1]]
+          p3 = [-v3[0], v3[1]]
+          break
+        case "right":
+          p1 = [v1[2], v1[1]]
+          p2 = [v2[2], v2[1]]
+          p3 = [v3[2], v3[1]]
+          break
+        case "left":
+          p1 = [-v1[2], v1[1]]
+          p2 = [-v2[2], v2[1]]
+          p3 = [-v3[2], v3[1]]
+          break
+        case "top":
+          p1 = [v1[0], v1[2]]
+          p2 = [v2[0], v2[2]]
+          p3 = [v3[0], v3[2]]
+          break
+        case "bottom":
+          p1 = [v1[0], -v1[2]]
+          p2 = [v2[0], -v2[2]]
+          p3 = [v3[0], -v3[2]]
+          break
+        default:
+          // Isometric view
+          p1 = [v1[0] + v1[2] * 0.5, v1[1] + v1[2] * 0.3]
+          p2 = [v2[0] + v2[2] * 0.5, v2[1] + v2[2] * 0.3]
+          p3 = [v3[0] + v3[2] * 0.5, v3[1] + v3[2] * 0.3]
+          break
       }
 
-      // Get triangle normal for lighting
-      let normal = [0, 0, 1]
-      if (normals.length > (i / 9) * 3) {
-        const normalIndex = (i / 9) * 3
-        normal = [normals[normalIndex], normals[normalIndex + 1], normals[normalIndex + 2]]
-      }
+      // Calculate scale to fit in image
+      const modelSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
+      const scale = (Math.min(width, height) * 0.8) / modelSize
 
-      // Calculate lighting intensity
-      const dotProduct = normal[0] * lightDir[0] + normal[1] * lightDir[1] + normal[2] * lightDir[2]
-      const lightIntensity = Math.max(0.3, Math.abs(dotProduct))
+      // Convert to screen coordinates
+      const screenP1 = [Math.round(width / 2 + p1[0] * scale), Math.round(height / 2 - p1[1] * scale)]
+      const screenP2 = [Math.round(width / 2 + p2[0] * scale), Math.round(height / 2 - p2[1] * scale)]
+      const screenP3 = [Math.round(width / 2 + p3[0] * scale), Math.round(height / 2 - p3[1] * scale)]
 
-      // Calculate color
-      const baseColor = 120
-      const finalColor = Math.round(baseColor * lightIntensity)
-
-      // Fill triangle
-      if (triangle.length === 3) {
-        fillTriangle(png, depthBuffer, triangle, [finalColor, finalColor, finalColor + 20])
-      }
-
-      trianglesRendered++
-      if (trianglesRendered % 100 === 0) {
-        console.log(`Rendered ${trianglesRendered} triangles for ${cameraPos.name}`)
-      }
+      // Draw triangle as filled shape
+      drawFilledTriangle(png, screenP1, screenP2, screenP3, [80, 80, 100])
+      projectedTriangles++
     }
 
-    console.log(`Total triangles rendered for ${cameraPos.name}: ${trianglesRendered}`)
-
-    console.log(`Successfully rendered ${cameraPos.name}`)
+    console.log(`Projected ${projectedTriangles} triangles for ${cameraPos.name}`)
 
     // Convert to base64
     const pngBuffer = PNG.sync.write(png)
@@ -430,7 +412,7 @@ async function renderModelAsPNG(
   } catch (error) {
     console.error(`Error rendering ${cameraPos.name}:`, error)
 
-    // Create error PNG
+    // Create error PNG with red background
     const png = new PNG({ width, height })
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -453,54 +435,29 @@ async function renderModelAsPNG(
   }
 }
 
-// Fill triangle with depth testing
-function fillTriangle(png: PNG, depthBuffer: Float32Array, triangle: number[][], color: number[]) {
-  const [p1, p2, p3] = triangle
-
+// Simple triangle drawing function
+function drawFilledTriangle(png: PNG, p1: number[], p2: number[], p3: number[], color: number[]) {
+  // Find bounding box
   const minX = Math.max(0, Math.floor(Math.min(p1[0], p2[0], p3[0])))
   const maxX = Math.min(png.width - 1, Math.ceil(Math.max(p1[0], p2[0], p3[0])))
   const minY = Math.max(0, Math.floor(Math.min(p1[1], p2[1], p3[1])))
   const maxY = Math.min(png.height - 1, Math.ceil(Math.max(p1[1], p2[1], p3[1])))
 
+  // Fill triangle
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
-      if (pointInTriangle([x, y], [p1[0], p1[1]], [p2[0], p2[1]], [p3[0], p3[1]])) {
-        // Calculate depth at this point
-        const depth = interpolateDepth([x, y], triangle)
-        const depthIndex = y * png.width + x
-
-        // Depth test
-        if (depth > depthBuffer[depthIndex]) {
-          depthBuffer[depthIndex] = depth
-
-          const idx = (png.width * y + x) << 2
-          png.data[idx] = color[0]
-          png.data[idx + 1] = color[1]
-          png.data[idx + 2] = color[2]
-          png.data[idx + 3] = 255
-        }
+      if (pointInTriangle([x, y], p1, p2, p3)) {
+        const idx = (png.width * y + x) << 2
+        png.data[idx] = color[0]
+        png.data[idx + 1] = color[1]
+        png.data[idx + 2] = color[2]
+        png.data[idx + 3] = 255
       }
     }
   }
 }
 
 // Interpolate depth within triangle
-function interpolateDepth(point: number[], triangle: number[][]): number {
-  const [p1, p2, p3] = triangle
-  const [x, y] = point
-
-  // Barycentric coordinates
-  const denom = (p2[1] - p3[1]) * (p1[0] - p3[0]) + (p3[0] - p2[0]) * (p1[1] - p3[1])
-  if (Math.abs(denom) < 1e-10) return p1[2]
-
-  const a = ((p2[1] - p3[1]) * (x - p3[0]) + (p3[0] - p2[0]) * (y - p3[1])) / denom
-  const b = ((p3[1] - p1[1]) * (x - p3[0]) + (p1[0] - p3[0]) * (y - p3[1])) / denom
-  const c = 1 - a - b
-
-  return a * p1[2] + b * p2[2] + c * p3[2]
-}
-
-// Point in triangle test
 function pointInTriangle(p: number[], a: number[], b: number[], c: number[]): boolean {
   const denom = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
   if (Math.abs(denom) < 1e-10) return false
