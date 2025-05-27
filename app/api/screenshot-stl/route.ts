@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { Buffer } from "buffer"
+import { PNG } from "pngjs"
 
 // Enhanced STL parser with multiple fallback strategies
 function parseSTL(buffer: ArrayBuffer) {
@@ -226,8 +227,8 @@ function generateNamedCameraPositions(radius = 5) {
   return positions
 }
 
-// Simple SVG renderer - more reliable than PNG in serverless
-async function renderModelAsSVG(
+// PNG renderer using pngjs library
+async function renderModelAsPNG(
   vertices: number[],
   cameraPos: { x: number; y: number; z: number; name: string; description: string },
   width = 512,
@@ -235,10 +236,24 @@ async function renderModelAsSVG(
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} as SVG`)
+    console.log(`Rendering ${cameraPos.name} as PNG`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
+    }
+
+    // Create PNG instance
+    const png = new PNG({ width, height })
+
+    // Fill with white background
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (width * y + x) << 2
+        png.data[idx] = 255 // R
+        png.data[idx + 1] = 255 // G
+        png.data[idx + 2] = 255 // B
+        png.data[idx + 3] = 255 // A
+      }
     }
 
     // Calculate bounding box
@@ -288,10 +303,6 @@ async function renderModelAsSVG(
     const cosPhi = totalDistance > 0 ? distance / totalDistance : 1
     const sinPhi = totalDistance > 0 ? camY / totalDistance : 0
 
-    // Start SVG
-    let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`
-    svg += `<rect width="100%" height="100%" fill="white"/>`
-
     // Project and render triangles
     const projectedTriangles: Array<{
       points: [number, number][]
@@ -330,36 +341,27 @@ async function renderModelAsSVG(
     // Sort by depth
     projectedTriangles.sort((a, b) => a.depth - b.depth)
 
-    // Render triangles as SVG polygons
+    // Render triangles
     projectedTriangles.forEach((triangle) => {
       const { points, depth } = triangle
 
       const normalizedDepth = Math.max(0, Math.min(1, (depth + maxDimension) / (2 * maxDimension)))
       const brightness = Math.floor(80 + normalizedDepth * 120)
 
-      const pointsStr = points.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ")
-
-      svg += `<polygon points="${pointsStr}" fill="rgb(${brightness},${brightness},${Math.floor(
-        brightness * 1.1,
-      )})" stroke="rgb(${Math.floor(brightness * 0.6)},${Math.floor(brightness * 0.6)},${Math.floor(
-        brightness * 0.7,
-      )})" stroke-width="0.2"/>`
+      // Fill triangle
+      fillTrianglePNG(png, points, brightness)
     })
 
-    // Add label
-    svg += `<rect x="10" y="10" width="120" height="35" fill="rgba(0,0,0,0.8)"/>`
-    svg += `<text x="15" y="25" fill="white" font-family="Arial" font-size="12" font-weight="bold">${
-      index + 1
-    }. ${cameraPos.name.toUpperCase()}</text>`
-    svg += `<text x="15" y="38" fill="white" font-family="Arial" font-size="10">${cameraPos.description}</text>`
+    // Add text label
+    addTextToPNG(png, `${index + 1}. ${cameraPos.name.toUpperCase()}`, 15, 25)
+    addTextToPNG(png, cameraPos.description, 15, 38)
 
-    svg += `</svg>`
+    console.log(`Successfully rendered ${cameraPos.name} as PNG`)
 
-    console.log(`Successfully rendered ${cameraPos.name} as SVG`)
-
-    // Convert SVG to base64 data URL
-    const base64 = Buffer.from(svg).toString("base64")
-    const dataUrl = `data:image/svg+xml;base64,${base64}`
+    // Convert to base64
+    const pngBuffer = PNG.sync.write(png)
+    const base64 = Buffer.from(pngBuffer).toString("base64")
+    const dataUrl = `data:image/png;base64,${base64}`
 
     return {
       dataUrl,
@@ -369,20 +371,130 @@ async function renderModelAsSVG(
   } catch (error) {
     console.error(`Error rendering ${cameraPos.name}:`, error)
 
-    // Simple error SVG
-    const errorSvg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <rect width="100%" height="100%" fill="lightgray"/>
-      <text x="${width / 2}" y="${height / 2 - 20}" text-anchor="middle" font-family="Arial" font-size="16" fill="red">Render Error</text>
-      <text x="${width / 2}" y="${height / 2}" text-anchor="middle" font-family="Arial" font-size="14">${
-        cameraPos.name
-      }</text>
-    </svg>`
+    // Create error PNG
+    const png = new PNG({ width, height })
 
-    const base64 = Buffer.from(errorSvg).toString("base64")
+    // Fill with light gray
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (width * y + x) << 2
+        png.data[idx] = 200
+        png.data[idx + 1] = 200
+        png.data[idx + 2] = 200
+        png.data[idx + 3] = 255
+      }
+    }
+
+    addTextToPNG(png, "Render Error", width / 2 - 50, height / 2 - 10)
+    addTextToPNG(png, cameraPos.name, width / 2 - 30, height / 2 + 10)
+
+    const pngBuffer = PNG.sync.write(png)
+    const base64 = Buffer.from(pngBuffer).toString("base64")
+
     return {
-      dataUrl: `data:image/svg+xml;base64,${base64}`,
+      dataUrl: `data:image/png;base64,${base64}`,
       name: cameraPos.name,
       description: `Error: ${cameraPos.description}`,
+    }
+  }
+}
+
+// Triangle filling for PNG
+function fillTrianglePNG(png: PNG, points: [number, number][], brightness: number) {
+  const [p1, p2, p3] = points
+
+  const minX = Math.max(0, Math.floor(Math.min(p1[0], p2[0], p3[0])))
+  const maxX = Math.min(png.width - 1, Math.ceil(Math.max(p1[0], p2[0], p3[0])))
+  const minY = Math.max(0, Math.floor(Math.min(p1[1], p2[1], p3[1])))
+  const maxY = Math.min(png.height - 1, Math.ceil(Math.max(p1[1], p2[1], p3[1])))
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (pointInTriangle([x, y], p1, p2, p3)) {
+        const idx = (png.width * y + x) << 2
+        png.data[idx] = brightness
+        png.data[idx + 1] = brightness
+        png.data[idx + 2] = Math.floor(brightness * 1.1)
+        png.data[idx + 3] = 255
+      }
+    }
+  }
+}
+
+// Point in triangle test
+function pointInTriangle(p: [number, number], a: [number, number], b: [number, number], c: [number, number]): boolean {
+  const denom = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+  if (Math.abs(denom) < 1e-10) return false
+
+  const alpha = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / denom
+  const beta = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / denom
+  const gamma = 1 - alpha - beta
+
+  return alpha >= 0 && beta >= 0 && gamma >= 0
+}
+
+// Simple text rendering for PNG
+function addTextToPNG(png: PNG, text: string, x: number, y: number) {
+  // Simple 5x7 bitmap font
+  const font: { [key: string]: number[] } = {
+    A: [0x70, 0x88, 0x88, 0xf8, 0x88, 0x88, 0x88],
+    B: [0xf0, 0x88, 0x88, 0xf0, 0x88, 0x88, 0xf0],
+    C: [0x70, 0x88, 0x80, 0x80, 0x80, 0x88, 0x70],
+    D: [0xf0, 0x88, 0x88, 0x88, 0x88, 0x88, 0xf0],
+    E: [0xf8, 0x80, 0x80, 0xf0, 0x80, 0x80, 0xf8],
+    F: [0xf8, 0x80, 0x80, 0xf0, 0x80, 0x80, 0x80],
+    G: [0x70, 0x88, 0x80, 0x98, 0x88, 0x88, 0x70],
+    H: [0x88, 0x88, 0x88, 0xf8, 0x88, 0x88, 0x88],
+    I: [0x70, 0x20, 0x20, 0x20, 0x20, 0x20, 0x70],
+    J: [0x38, 0x10, 0x10, 0x10, 0x90, 0x90, 0x60],
+    K: [0x88, 0x90, 0xa0, 0xc0, 0xa0, 0x90, 0x88],
+    L: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0xf8],
+    M: [0x88, 0xd8, 0xa8, 0xa8, 0x88, 0x88, 0x88],
+    N: [0x88, 0xc8, 0xa8, 0x98, 0x88, 0x88, 0x88],
+    O: [0x70, 0x88, 0x88, 0x88, 0x88, 0x88, 0x70],
+    P: [0xf0, 0x88, 0x88, 0xf0, 0x80, 0x80, 0x80],
+    Q: [0x70, 0x88, 0x88, 0x88, 0xa8, 0x90, 0x68],
+    R: [0xf0, 0x88, 0x88, 0xf0, 0xa0, 0x90, 0x88],
+    S: [0x70, 0x88, 0x80, 0x70, 0x08, 0x88, 0x70],
+    T: [0xf8, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20],
+    U: [0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x70],
+    V: [0x88, 0x88, 0x88, 0x88, 0x50, 0x50, 0x20],
+    W: [0x88, 0x88, 0x88, 0xa8, 0xa8, 0xd8, 0x88],
+    X: [0x88, 0x50, 0x20, 0x20, 0x50, 0x88, 0x88],
+    Y: [0x88, 0x88, 0x50, 0x20, 0x20, 0x20, 0x20],
+    Z: [0xf8, 0x08, 0x10, 0x20, 0x40, 0x80, 0xf8],
+    "0": [0x70, 0x88, 0x98, 0xa8, 0xc8, 0x88, 0x70],
+    "1": [0x20, 0x60, 0x20, 0x20, 0x20, 0x20, 0x70],
+    "2": [0x70, 0x88, 0x08, 0x70, 0x80, 0x80, 0xf8],
+    "3": [0x70, 0x88, 0x08, 0x30, 0x08, 0x88, 0x70],
+    "4": [0x10, 0x30, 0x50, 0x90, 0xf8, 0x10, 0x10],
+    "5": [0xf8, 0x80, 0xf0, 0x08, 0x08, 0x88, 0x70],
+    "6": [0x70, 0x80, 0x80, 0xf0, 0x88, 0x88, 0x70],
+    "7": [0xf8, 0x08, 0x10, 0x20, 0x40, 0x40, 0x40],
+    "8": [0x70, 0x88, 0x88, 0x70, 0x88, 0x88, 0x70],
+    "9": [0x70, 0x88, 0x88, 0x78, 0x08, 0x08, 0x70],
+    " ": [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+    ".": [0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x60],
+  }
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i].toUpperCase()
+    const pattern = font[char] || font[" "]
+
+    for (let row = 0; row < 7; row++) {
+      for (let col = 0; col < 8; col++) {
+        if (pattern[row] & (1 << (7 - col))) {
+          const px = x + i * 6 + col
+          const py = y + row
+          if (px >= 0 && px < png.width && py >= 0 && py < png.height) {
+            const idx = (png.width * py + px) << 2
+            png.data[idx] = 0 // Black text
+            png.data[idx + 1] = 0
+            png.data[idx + 2] = 0
+            png.data[idx + 3] = 255
+          }
+        }
+      }
     }
   }
 }
@@ -479,7 +591,7 @@ export async function POST(request: NextRequest) {
     const cameraPositions = generateNamedCameraPositions(5)
     console.log("Generated camera positions:", cameraPositions.length)
 
-    // Render screenshots as SVG
+    // Render screenshots as PNG
     const screenshots: string[] = []
     const viewNames: string[] = []
     const viewDescriptions: string[] = []
@@ -488,7 +600,7 @@ export async function POST(request: NextRequest) {
       console.log(`Rendering view ${i + 1}/${cameraPositions.length}: ${cameraPositions[i].name}`)
 
       try {
-        const result = await renderModelAsSVG(vertices, cameraPositions[i], 512, 512, i)
+        const result = await renderModelAsPNG(vertices, cameraPositions[i], 512, 512, i)
         screenshots.push(result.dataUrl)
         viewNames.push(result.name)
         viewDescriptions.push(result.description)
@@ -496,13 +608,21 @@ export async function POST(request: NextRequest) {
       } catch (renderError) {
         console.error(`Error rendering view ${i + 1}:`, renderError)
 
-        const errorSvg = `<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-          <rect width="100%" height="100%" fill="lightgray"/>
-          <text x="256" y="256" text-anchor="middle" font-family="Arial" font-size="20">Error: ${cameraPositions[i].name}</text>
-        </svg>`
+        // Create error PNG
+        const png = new PNG({ width: 512, height: 512 })
+        for (let y = 0; y < 512; y++) {
+          for (let x = 0; x < 512; x++) {
+            const idx = (512 * y + x) << 2
+            png.data[idx] = 200
+            png.data[idx + 1] = 200
+            png.data[idx + 2] = 200
+            png.data[idx + 3] = 255
+          }
+        }
 
-        const base64 = Buffer.from(errorSvg).toString("base64")
-        screenshots.push(`data:image/svg+xml;base64,${base64}`)
+        const pngBuffer = PNG.sync.write(png)
+        const base64 = Buffer.from(pngBuffer).toString("base64")
+        screenshots.push(`data:image/png;base64,${base64}`)
         viewNames.push(cameraPositions[i].name)
         viewDescriptions.push(`Error: ${cameraPositions[i].description}`)
       }
@@ -573,8 +693,8 @@ export async function GET() {
       method: "POST",
       status: "operational",
       timestamp: new Date().toISOString(),
-      version: "4.0.0",
-      format: "SVG images",
+      version: "5.0.0",
+      format: "PNG images",
     },
     {
       headers: corsHeaders,
