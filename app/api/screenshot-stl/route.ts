@@ -247,37 +247,7 @@ function generateNamedCameraPositions(radius = 5) {
   return positions
 }
 
-// 3D transformation functions
-function createLookAtMatrix(eye: number[], target: number[], up: number[]) {
-  const zAxis = normalize(subtract(eye, target))
-  const xAxis = normalize(cross(up, zAxis))
-  const yAxis = cross(zAxis, xAxis)
-
-  return [xAxis[0], yAxis[0], zAxis[0], xAxis[1], yAxis[1], zAxis[1], xAxis[2], yAxis[2], zAxis[2]]
-}
-
-function normalize(v: number[]): number[] {
-  const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
-  return len > 0 ? [v[0] / len, v[1] / len, v[2] / len] : [0, 0, 0]
-}
-
-function subtract(a: number[], b: number[]): number[] {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-function cross(a: number[], b: number[]): number[] {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
-}
-
-function transformPoint(point: number[], matrix: number[]): number[] {
-  return [
-    point[0] * matrix[0] + point[1] * matrix[1] + point[2] * matrix[2],
-    point[0] * matrix[3] + point[1] * matrix[4] + point[2] * matrix[5],
-    point[0] * matrix[6] + point[1] * matrix[7] + point[2] * matrix[8],
-  ]
-}
-
-// Ultra-simple solid triangle renderer
+// DEBUG RENDERER - Shows exactly what's happening
 async function renderModelAsPNG(
   vertices: number[],
   normals: number[],
@@ -287,22 +257,26 @@ async function renderModelAsPNG(
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} - SOLID TRIANGLES ONLY`)
+    console.log(`=== DEBUG RENDERING ${cameraPos.name} ===`)
+    console.log(`Input vertices: ${vertices.length} (${vertices.length / 3} points, ${vertices.length / 9} triangles)`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
     }
 
+    // Show first few vertices for debugging
+    console.log("First 9 vertices:", vertices.slice(0, 9))
+
     // Create PNG instance
     const png = new PNG({ width, height })
 
-    // Fill with light gray background
+    // Fill with white background
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2
-        png.data[idx] = 220 // R
-        png.data[idx + 1] = 220 // G
-        png.data[idx + 2] = 220 // B
+        png.data[idx] = 255 // R
+        png.data[idx + 1] = 255 // G
+        png.data[idx + 2] = 255 // B
         png.data[idx + 3] = 255 // A
       }
     }
@@ -328,81 +302,115 @@ async function renderModelAsPNG(
     const centerY = (minY + maxY) / 2
     const centerZ = (minZ + maxZ) / 2
     const modelSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
-    const scale = (Math.min(width, height) * 0.7) / modelSize
 
-    console.log(`Model size: ${modelSize.toFixed(2)}, Scale: ${scale.toFixed(2)}`)
+    console.log(`Model bounds: X(${minX} to ${maxX}), Y(${minY} to ${maxY}), Z(${minZ} to ${maxZ})`)
+    console.log(`Model center: (${centerX}, ${centerY}, ${centerZ})`)
+    console.log(`Model size: ${modelSize}`)
 
-    let trianglesFilled = 0
+    // Use a very large scale to make sure we see SOMETHING
+    const scale = 100 // Fixed large scale
+    console.log(`Using fixed scale: ${scale}`)
 
-    // Process every triangle and fill it
-    for (let i = 0; i < vertices.length; i += 9) {
-      const triangle = []
-
-      // Get the 3 vertices of the triangle
-      for (let j = 0; j < 3; j++) {
-        const x = vertices[i + j * 3] - centerX
-        const y = vertices[i + j * 3 + 1] - centerY
-        const z = vertices[i + j * 3 + 2] - centerZ
-
-        // Simple orthographic projection
-        let screenX, screenY
-        switch (cameraPos.name) {
-          case "front":
-            screenX = x
-            screenY = y
-            break
-          case "back":
-            screenX = -x
-            screenY = y
-            break
-          case "right":
-            screenX = z
-            screenY = y
-            break
-          case "left":
-            screenX = -z
-            screenY = y
-            break
-          case "top":
-            screenX = x
-            screenY = z
-            break
-          case "bottom":
-            screenX = x
-            screenY = -z
-            break
-          default:
-            // Isometric with unique angle per view
-            const angle = index * (Math.PI / 8)
-            screenX = x * Math.cos(angle) + z * Math.sin(angle)
-            screenY = y + (x * Math.sin(angle) - z * Math.cos(angle)) * 0.5
-            break
+    // Draw a test pattern first to make sure PNG generation works
+    console.log("Drawing test pattern...")
+    for (let i = 0; i < 10; i++) {
+      for (let j = 0; j < 10; j++) {
+        const x = 50 + i * 10
+        const y = 50 + j * 10
+        if (x < width && y < height) {
+          const idx = (width * y + x) << 2
+          png.data[idx] = 255 // R (red test pattern)
+          png.data[idx + 1] = 0 // G
+          png.data[idx + 2] = 0 // B
+          png.data[idx + 3] = 255 // A
         }
-
-        const pixelX = Math.round(width / 2 + screenX * scale)
-        const pixelY = Math.round(height / 2 - screenY * scale)
-        triangle.push([pixelX, pixelY])
-      }
-
-      // Fill the triangle with solid color
-      if (triangle.length === 3) {
-        fillTriangleSimple(png, triangle[0], triangle[1], triangle[2], [80, 120, 160])
-        trianglesFilled++
       }
     }
 
-    console.log(`Filled ${trianglesFilled} solid triangles for ${cameraPos.name}`)
+    // Now try to draw the actual model
+    let pixelsDrawn = 0
+    let trianglesProcessed = 0
+
+    console.log("Processing triangles...")
+    for (let i = 0; i < vertices.length; i += 9) {
+      trianglesProcessed++
+
+      // Get the 3 vertices of the triangle
+      const v1x = vertices[i] - centerX
+      const v1y = vertices[i + 1] - centerY
+      const v1z = vertices[i + 2] - centerZ
+
+      const v2x = vertices[i + 3] - centerX
+      const v2y = vertices[i + 4] - centerY
+      const v2z = vertices[i + 5] - centerZ
+
+      const v3x = vertices[i + 6] - centerX
+      const v3y = vertices[i + 7] - centerY
+      const v3z = vertices[i + 8] - centerZ
+
+      // Simple orthographic projection - just use X,Y coordinates
+      const p1x = Math.round(width / 2 + v1x * scale)
+      const p1y = Math.round(height / 2 - v1y * scale)
+
+      const p2x = Math.round(width / 2 + v2x * scale)
+      const p2y = Math.round(height / 2 - v2y * scale)
+
+      const p3x = Math.round(width / 2 + v3x * scale)
+      const p3y = Math.round(height / 2 - v3y * scale)
+
+      // Log first few triangles
+      if (trianglesProcessed <= 3) {
+        console.log(
+          `Triangle ${trianglesProcessed}: (${v1x.toFixed(2)},${v1y.toFixed(2)},${v1z.toFixed(2)}) -> (${p1x},${p1y})`,
+        )
+        console.log(`                    (${v2x.toFixed(2)},${v2y.toFixed(2)},${v2z.toFixed(2)}) -> (${p2x},${p2y})`)
+        console.log(`                    (${v3x.toFixed(2)},${v3y.toFixed(2)},${v3z.toFixed(2)}) -> (${p3x},${p3y})`)
+      }
+
+      // Draw the triangle vertices as large squares
+      const points = [
+        [p1x, p1y],
+        [p2x, p2y],
+        [p3x, p3y],
+      ]
+
+      for (const [px, py] of points) {
+        // Draw a 5x5 square for each vertex
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const x = px + dx
+            const y = py + dy
+            if (x >= 0 && x < width && y >= 0 && y < height) {
+              const idx = (width * y + x) << 2
+              png.data[idx] = 0 // R (black squares)
+              png.data[idx + 1] = 0 // G
+              png.data[idx + 2] = 255 // B (blue squares)
+              png.data[idx + 3] = 255 // A
+              pixelsDrawn++
+            }
+          }
+        }
+      }
+
+      // Also fill the triangle
+      fillTriangleDebug(png, [p1x, p1y], [p2x, p2y], [p3x, p3y], [0, 255, 0])
+    }
+
+    console.log(`Processed ${trianglesProcessed} triangles`)
+    console.log(`Drew ${pixelsDrawn} pixels`)
 
     // Convert to base64
     const pngBuffer = PNG.sync.write(png)
     const base64 = Buffer.from(pngBuffer).toString("base64")
     const dataUrl = `data:image/png;base64,${base64}`
 
+    console.log(`Generated PNG, base64 length: ${base64.length}`)
+
     return { dataUrl, name: cameraPos.name, description: cameraPos.description }
   } catch (error) {
     console.error(`Error rendering ${cameraPos.name}:`, error)
 
-    // Create simple error image
+    // Create simple error image with text
     const png = new PNG({ width, height })
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -424,18 +432,16 @@ async function renderModelAsPNG(
   }
 }
 
-// Simple triangle fill function
-function fillTriangleSimple(png: PNG, p1: number[], p2: number[], p3: number[], color: number[]) {
-  // Find bounding box
+// Simple triangle fill for debugging
+function fillTriangleDebug(png: PNG, p1: number[], p2: number[], p3: number[], color: number[]) {
   const minX = Math.max(0, Math.floor(Math.min(p1[0], p2[0], p3[0])))
   const maxX = Math.min(png.width - 1, Math.ceil(Math.max(p1[0], p2[0], p3[0])))
   const minY = Math.max(0, Math.floor(Math.min(p1[1], p2[1], p3[1])))
   const maxY = Math.min(png.height - 1, Math.ceil(Math.max(p1[1], p2[1], p3[1])))
 
-  // Fill every pixel in the triangle
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
-      if (isPointInTriangle([x, y], p1, p2, p3)) {
+      if (isPointInTriangleDebug([x, y], p1, p2, p3)) {
         const idx = (png.width * y + x) << 2
         png.data[idx] = color[0]
         png.data[idx + 1] = color[1]
@@ -446,8 +452,7 @@ function fillTriangleSimple(png: PNG, p1: number[], p2: number[], p3: number[], 
   }
 }
 
-// Simple point-in-triangle test
-function isPointInTriangle(p: number[], a: number[], b: number[], c: number[]): boolean {
+function isPointInTriangleDebug(p: number[], a: number[], b: number[], c: number[]): boolean {
   const denom = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
   if (Math.abs(denom) < 1e-10) return false
 
