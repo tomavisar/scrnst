@@ -247,7 +247,37 @@ function generateNamedCameraPositions(radius = 5) {
   return positions
 }
 
-// Solid surface renderer with lighting
+// 3D transformation functions
+function createLookAtMatrix(eye: number[], target: number[], up: number[]) {
+  const zAxis = normalize(subtract(eye, target))
+  const xAxis = normalize(cross(up, zAxis))
+  const yAxis = cross(zAxis, xAxis)
+
+  return [xAxis[0], yAxis[0], zAxis[0], xAxis[1], yAxis[1], zAxis[1], xAxis[2], yAxis[2], zAxis[2]]
+}
+
+function normalize(v: number[]): number[] {
+  const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+  return len > 0 ? [v[0] / len, v[1] / len, v[2] / len] : [0, 0, 0]
+}
+
+function subtract(a: number[], b: number[]): number[] {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+function cross(a: number[], b: number[]): number[] {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+function transformPoint(point: number[], matrix: number[]): number[] {
+  return [
+    point[0] * matrix[0] + point[1] * matrix[1] + point[2] * matrix[2],
+    point[0] * matrix[3] + point[1] * matrix[4] + point[2] * matrix[5],
+    point[0] * matrix[6] + point[1] * matrix[7] + point[2] * matrix[8],
+  ]
+}
+
+// Solid surface renderer with proper 3D camera system
 async function renderModelAsPNG(
   vertices: number[],
   normals: number[],
@@ -257,7 +287,7 @@ async function renderModelAsPNG(
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} as solid surface`)
+    console.log(`Rendering ${cameraPos.name} from position (${cameraPos.x}, ${cameraPos.y}, ${cameraPos.z})`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
@@ -277,7 +307,7 @@ async function renderModelAsPNG(
       }
     }
 
-    // Calculate bounding box with padding
+    // Calculate model center and bounds
     let minX = Number.POSITIVE_INFINITY,
       maxX = Number.NEGATIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY,
@@ -294,163 +324,46 @@ async function renderModelAsPNG(
       maxZ = Math.max(maxZ, vertices[i + 2])
     }
 
-    const centerX = (minX + maxX) / 2
-    const centerY = (minY + maxY) / 2
-    const centerZ = (minZ + maxZ) / 2
+    const modelCenter = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2]
+    const modelSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
 
-    // Calculate dimensions for each view
-    let viewWidth, viewHeight
-    switch (cameraPos.name) {
-      case "front":
-      case "back":
-        viewWidth = maxX - minX
-        viewHeight = maxY - minY
-        break
-      case "right":
-      case "left":
-        viewWidth = maxZ - minZ
-        viewHeight = maxY - minY
-        break
-      case "top":
-      case "bottom":
-        viewWidth = maxX - minX
-        viewHeight = maxZ - minZ
-        break
-      default:
-        // For isometric views, use the maximum dimension
-        viewWidth = Math.max(maxX - minX, maxZ - minZ) * 1.2
-        viewHeight = Math.max(maxY - minY, maxZ - minZ) * 1.2
-        break
-    }
+    // Create camera transformation matrix
+    const eye = [cameraPos.x, cameraPos.y, cameraPos.z]
+    const target = modelCenter
+    const up = [0, 1, 0] // Y is up
+    const viewMatrix = createLookAtMatrix(eye, target, up)
 
-    // Add 20% padding to ensure full visibility
-    const maxViewDimension = Math.max(viewWidth, viewHeight) * 1.2
-
-    if (maxViewDimension === 0) {
-      throw new Error("Model has zero dimensions")
-    }
-
-    // Scale to fit 90% of the image (leaving 5% margin on each side)
-    const scale = (Math.min(width, height) * 0.9) / maxViewDimension
-
-    console.log(
-      `View: ${cameraPos.name}, Scale: ${scale}, Dimensions: ${viewWidth.toFixed(2)} x ${viewHeight.toFixed(2)}`,
-    )
-
-    // Light direction (from top-right-front)
-    const lightDir = [0.5, 0.7, 0.5]
-    const lightMagnitude = Math.sqrt(lightDir[0] ** 2 + lightDir[1] ** 2 + lightDir[2] ** 2)
-    lightDir[0] /= lightMagnitude
-    lightDir[1] /= lightMagnitude
-    lightDir[2] /= lightMagnitude
+    // Calculate scale to fit model in view
+    const scale = (Math.min(width, height) * 0.8) / modelSize
 
     // Create depth buffer
     const depthBuffer = new Float32Array(width * height)
     depthBuffer.fill(Number.NEGATIVE_INFINITY)
 
-    // Render triangles with solid fill and lighting
+    // Light direction (from camera position)
+    const lightDir = normalize(subtract(eye, target))
+
+    // Render triangles
     for (let i = 0; i < vertices.length; i += 9) {
       const triangle = []
 
-      // Get triangle vertices and transform them
+      // Transform each vertex of the triangle
       for (let j = 0; j < 3; j++) {
-        const x = vertices[i + j * 3] - centerX
-        const y = vertices[i + j * 3 + 1] - centerY
-        const z = vertices[i + j * 3 + 2] - centerZ
+        const worldPos = [
+          vertices[i + j * 3] - modelCenter[0],
+          vertices[i + j * 3 + 1] - modelCenter[1],
+          vertices[i + j * 3 + 2] - modelCenter[2],
+        ]
 
-        // Project to 2D based on camera view with proper bounds
-        let screenX, screenY, depth
+        // Transform to camera space
+        const cameraPos = transformPoint(worldPos, viewMatrix)
 
-        switch (cameraPos.name) {
-          case "front":
-            screenX = x * scale
-            screenY = y * scale
-            depth = z
-            break
-          case "back":
-            screenX = -x * scale
-            screenY = y * scale
-            depth = -z
-            break
-          case "right":
-            screenX = z * scale
-            screenY = y * scale
-            depth = -x
-            break
-          case "left":
-            screenX = -z * scale
-            screenY = y * scale
-            depth = x
-            break
-          case "top":
-            screenX = x * scale
-            screenY = z * scale
-            depth = -y
-            break
-          case "bottom":
-            screenX = x * scale
-            screenY = -z * scale
-            depth = y
-            break
-          case "iso_1": // Front-right-top corner
-            screenX = (x * 0.707 + z * 0.707) * scale
-            screenY = (y * 0.816 - x * 0.408 + z * 0.408) * scale
-            depth = x + y + z
-            break
-          case "iso_2": // Front-left-top corner
-            screenX = (-x * 0.707 + z * 0.707) * scale
-            screenY = (y * 0.816 + x * 0.408 + z * 0.408) * scale
-            depth = -x + y + z
-            break
-          case "iso_3": // Back-right-top corner
-            screenX = (x * 0.707 - z * 0.707) * scale
-            screenY = (y * 0.816 - x * 0.408 - z * 0.408) * scale
-            depth = x + y - z
-            break
-          case "iso_4": // Back-left-top corner
-            screenX = (-x * 0.707 - z * 0.707) * scale
-            screenY = (y * 0.816 + x * 0.408 - z * 0.408) * scale
-            depth = -x + y - z
-            break
-          case "corner_1": // Front-right-bottom corner
-            screenX = (x * 0.707 + z * 0.707) * scale
-            screenY = (-y * 0.816 - x * 0.408 + z * 0.408) * scale
-            depth = x - y + z
-            break
-          case "corner_2": // Front-left-bottom corner
-            screenX = (-x * 0.707 + z * 0.707) * scale
-            screenY = (-y * 0.816 + x * 0.408 + z * 0.408) * scale
-            depth = -x - y + z
-            break
-          case "corner_3": // Back-right-bottom corner
-            screenX = (x * 0.707 - z * 0.707) * scale
-            screenY = (-y * 0.816 - x * 0.408 - z * 0.408) * scale
-            depth = x - y - z
-            break
-          case "corner_4": // Back-left-bottom corner
-            screenX = (-x * 0.707 - z * 0.707) * scale
-            screenY = (-y * 0.816 + x * 0.408 - z * 0.408) * scale
-            depth = -x - y - z
-            break
-          case "angle_1": // 45-degree right side view
-            screenX = (x * 0.5 + z * 0.866) * scale
-            screenY = (y + x * 0.1) * scale
-            depth = x * 0.5 + y + z * 0.866
-            break
-          case "angle_2": // 45-degree front view
-            screenX = (x * 0.866 + z * 0.5) * scale
-            screenY = (y + z * 0.1) * scale
-            depth = x * 0.866 + y + z * 0.5
-            break
-          default:
-            // Fallback isometric
-            screenX = (x * 0.866 + z * 0.5) * scale
-            screenY = (y + z * 0.289) * scale
-            depth = x + y + z
-            break
-        }
+        // Project to screen space
+        const screenX = Math.round(width / 2 + cameraPos[0] * scale)
+        const screenY = Math.round(height / 2 - cameraPos[1] * scale)
+        const depth = cameraPos[2]
 
-        triangle.push([Math.round(width / 2 + screenX), Math.round(height / 2 - screenY), depth])
+        triangle.push([screenX, screenY, depth])
       }
 
       // Get triangle normal for lighting
@@ -462,10 +375,10 @@ async function renderModelAsPNG(
 
       // Calculate lighting intensity
       const dotProduct = normal[0] * lightDir[0] + normal[1] * lightDir[1] + normal[2] * lightDir[2]
-      const lightIntensity = Math.max(0.3, Math.abs(dotProduct)) // Ambient + diffuse
+      const lightIntensity = Math.max(0.3, Math.abs(dotProduct))
 
-      // Calculate color based on lighting
-      const baseColor = 120 // Medium gray
+      // Calculate color
+      const baseColor = 120
       const finalColor = Math.round(baseColor * lightIntensity)
 
       // Fill triangle
@@ -474,7 +387,7 @@ async function renderModelAsPNG(
       }
     }
 
-    console.log(`Successfully rendered ${cameraPos.name} as solid surface`)
+    console.log(`Successfully rendered ${cameraPos.name}`)
 
     // Convert to base64
     const pngBuffer = PNG.sync.write(png)
@@ -491,8 +404,6 @@ async function renderModelAsPNG(
 
     // Create error PNG
     const png = new PNG({ width, height })
-
-    // Fill with light red
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2
