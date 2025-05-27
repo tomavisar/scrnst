@@ -277,7 +277,7 @@ async function renderModelAsPNG(
       }
     }
 
-    // Calculate bounding box
+    // Calculate bounding box with padding
     let minX = Number.POSITIVE_INFINITY,
       maxX = Number.NEGATIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY,
@@ -297,13 +297,45 @@ async function renderModelAsPNG(
     const centerX = (minX + maxX) / 2
     const centerY = (minY + maxY) / 2
     const centerZ = (minZ + maxZ) / 2
-    const maxDimension = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
 
-    if (maxDimension === 0) {
+    // Calculate dimensions for each view
+    let viewWidth, viewHeight
+    switch (cameraPos.name) {
+      case "front":
+      case "back":
+        viewWidth = maxX - minX
+        viewHeight = maxY - minY
+        break
+      case "right":
+      case "left":
+        viewWidth = maxZ - minZ
+        viewHeight = maxY - minY
+        break
+      case "top":
+      case "bottom":
+        viewWidth = maxX - minX
+        viewHeight = maxZ - minZ
+        break
+      default:
+        // For isometric views, use the maximum dimension
+        viewWidth = Math.max(maxX - minX, maxZ - minZ) * 1.2
+        viewHeight = Math.max(maxY - minY, maxZ - minZ) * 1.2
+        break
+    }
+
+    // Add 20% padding to ensure full visibility
+    const maxViewDimension = Math.max(viewWidth, viewHeight) * 1.2
+
+    if (maxViewDimension === 0) {
       throw new Error("Model has zero dimensions")
     }
 
-    const scale = (Math.min(width, height) * 0.8) / maxDimension
+    // Scale to fit 90% of the image (leaving 5% margin on each side)
+    const scale = (Math.min(width, height) * 0.9) / maxViewDimension
+
+    console.log(
+      `View: ${cameraPos.name}, Scale: ${scale}, Dimensions: ${viewWidth.toFixed(2)} x ${viewHeight.toFixed(2)}`,
+    )
 
     // Light direction (from top-right-front)
     const lightDir = [0.5, 0.7, 0.5]
@@ -326,7 +358,7 @@ async function renderModelAsPNG(
         const y = vertices[i + j * 3 + 1] - centerY
         const z = vertices[i + j * 3 + 2] - centerZ
 
-        // Project to 2D based on camera view
+        // Project to 2D based on camera view with proper bounds
         let screenX, screenY, depth
 
         switch (cameraPos.name) {
@@ -361,9 +393,9 @@ async function renderModelAsPNG(
             depth = y
             break
           default:
-            // Isometric views
-            screenX = (x + z * 0.5) * scale
-            screenY = (y + z * 0.3) * scale
+            // Isometric views with proper scaling
+            screenX = (x * 0.866 + z * 0.5) * scale
+            screenY = (y + z * 0.289) * scale
             depth = x + y + z
             break
         }
