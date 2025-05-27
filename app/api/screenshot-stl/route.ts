@@ -277,7 +277,7 @@ function transformPoint(point: number[], matrix: number[]): number[] {
   ]
 }
 
-// Ultra-simple renderer that always works
+// Ultra-aggressive renderer that shows everything
 async function renderModelAsPNG(
   vertices: number[],
   normals: number[],
@@ -287,7 +287,7 @@ async function renderModelAsPNG(
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} - Ultra-simple mode`)
+    console.log(`Rendering ${cameraPos.name} - Aggressive wireframe mode`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
@@ -296,13 +296,13 @@ async function renderModelAsPNG(
     // Create PNG instance
     const png = new PNG({ width, height })
 
-    // Fill with light gray background
+    // Fill with white background
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2
-        png.data[idx] = 240 // R
-        png.data[idx + 1] = 240 // G
-        png.data[idx + 2] = 240 // B
+        png.data[idx] = 255 // R
+        png.data[idx + 1] = 255 // G
+        png.data[idx + 2] = 255 // B
         png.data[idx + 3] = 255 // A
       }
     }
@@ -329,16 +329,19 @@ async function renderModelAsPNG(
     const centerZ = (minZ + maxZ) / 2
     const modelSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
 
+    console.log(
+      `Model bounds: X(${minX.toFixed(2)} to ${maxX.toFixed(2)}), Y(${minY.toFixed(2)} to ${maxY.toFixed(2)}), Z(${minZ.toFixed(2)} to ${maxZ.toFixed(2)})`,
+    )
     console.log(`Model center: (${centerX.toFixed(2)}, ${centerY.toFixed(2)}, ${centerZ.toFixed(2)})`)
     console.log(`Model size: ${modelSize.toFixed(2)}`)
 
-    // Calculate scale to fit in image
-    const scale = (Math.min(width, height) * 0.6) / modelSize
+    // Use a larger scale to make sure we see the model
+    const scale = (Math.min(width, height) * 0.8) / modelSize
     console.log(`Scale: ${scale.toFixed(2)}`)
 
-    let pointsDrawn = 0
+    // Collect all projected points first
+    const projectedPoints: Array<[number, number]> = []
 
-    // Draw every vertex as a point first (for debugging)
     for (let i = 0; i < vertices.length; i += 3) {
       const x = vertices[i] - centerX
       const y = vertices[i + 1] - centerY
@@ -347,109 +350,160 @@ async function renderModelAsPNG(
       // Simple orthographic projection based on camera angle
       let screenX, screenY
 
-      if (cameraPos.name === "front") {
-        screenX = x
-        screenY = y
-      } else if (cameraPos.name === "back") {
-        screenX = -x
-        screenY = y
-      } else if (cameraPos.name === "right") {
-        screenX = z
-        screenY = y
-      } else if (cameraPos.name === "left") {
-        screenX = -z
-        screenY = y
-      } else if (cameraPos.name === "top") {
-        screenX = x
-        screenY = z
-      } else if (cameraPos.name === "bottom") {
-        screenX = x
-        screenY = -z
-      } else {
-        // Isometric views with distinct angles
-        const angle = index * (Math.PI / 8) // Different angle for each view
-        const cosA = Math.cos(angle)
-        const sinA = Math.sin(angle)
-        screenX = x * cosA + z * sinA
-        screenY = y + (x * sinA - z * cosA) * 0.5
-      }
-
-      // Convert to screen coordinates
-      const pixelX = Math.round(width / 2 + screenX * scale)
-      const pixelY = Math.round(height / 2 - screenY * scale)
-
-      // Draw a small cross for each vertex
-      if (pixelX >= 1 && pixelX < width - 1 && pixelY >= 1 && pixelY < height - 1) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const idx = (width * (pixelY + dy) + (pixelX + dx)) << 2
-            png.data[idx] = 50 // R
-            png.data[idx + 1] = 50 // G
-            png.data[idx + 2] = 200 // B (blue points)
-            png.data[idx + 3] = 255 // A
-          }
-        }
-        pointsDrawn++
-      }
-    }
-
-    console.log(`Drew ${pointsDrawn} points for ${cameraPos.name}`)
-
-    // Also draw triangles as wireframes
-    let trianglesDrawn = 0
-    for (let i = 0; i < vertices.length; i += 9) {
-      const triangle = []
-
-      // Get the 3 vertices of the triangle
-      for (let j = 0; j < 3; j++) {
-        const x = vertices[i + j * 3] - centerX
-        const y = vertices[i + j * 3 + 1] - centerY
-        const z = vertices[i + j * 3 + 2] - centerZ
-
-        let screenX, screenY
-
-        if (cameraPos.name === "front") {
+      switch (cameraPos.name) {
+        case "front":
           screenX = x
           screenY = y
-        } else if (cameraPos.name === "back") {
+          break
+        case "back":
           screenX = -x
           screenY = y
-        } else if (cameraPos.name === "right") {
+          break
+        case "right":
           screenX = z
           screenY = y
-        } else if (cameraPos.name === "left") {
+          break
+        case "left":
           screenX = -z
           screenY = y
-        } else if (cameraPos.name === "top") {
+          break
+        case "top":
           screenX = x
           screenY = z
-        } else if (cameraPos.name === "bottom") {
+          break
+        case "bottom":
           screenX = x
           screenY = -z
-        } else {
-          // Isometric views with distinct angles
+          break
+        default:
+          // Isometric views with distinct angles based on index
           const angle = index * (Math.PI / 8)
           const cosA = Math.cos(angle)
           const sinA = Math.sin(angle)
           screenX = x * cosA + z * sinA
           screenY = y + (x * sinA - z * cosA) * 0.5
-        }
-
-        const pixelX = Math.round(width / 2 + screenX * scale)
-        const pixelY = Math.round(height / 2 - screenY * scale)
-        triangle.push([pixelX, pixelY])
+          break
       }
 
-      // Draw triangle edges
-      if (triangle.length === 3) {
-        drawLine(png, triangle[0], triangle[1], [200, 50, 50]) // Red lines
-        drawLine(png, triangle[1], triangle[2], [200, 50, 50])
-        drawLine(png, triangle[2], triangle[0], [200, 50, 50])
+      // Convert to screen coordinates
+      const pixelX = Math.round(width / 2 + screenX * scale)
+      const pixelY = Math.round(height / 2 - screenY * scale)
+      projectedPoints.push([pixelX, pixelY])
+    }
+
+    console.log(`Projected ${projectedPoints.length} points for ${cameraPos.name}`)
+
+    // Draw all vertices as large dots
+    let pointsDrawn = 0
+    for (let i = 0; i < projectedPoints.length; i++) {
+      const [pixelX, pixelY] = projectedPoints[i]
+
+      // Draw a 3x3 square for each vertex
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = pixelX + dx
+          const y = pixelY + dy
+          if (x >= 0 && x < width && y >= 0 && y < height) {
+            const idx = (width * y + x) << 2
+            png.data[idx] = 0 // R (black dots)
+            png.data[idx + 1] = 0 // G
+            png.data[idx + 2] = 255 // B (blue dots)
+            png.data[idx + 3] = 255 // A
+          }
+        }
+      }
+      pointsDrawn++
+    }
+
+    console.log(`Drew ${pointsDrawn} vertex points for ${cameraPos.name}`)
+
+    // Draw ALL triangle wireframes with thick lines
+    let trianglesDrawn = 0
+    for (let i = 0; i < projectedPoints.length; i += 3) {
+      if (i + 2 < projectedPoints.length) {
+        const p1 = projectedPoints[i]
+        const p2 = projectedPoints[i + 1]
+        const p3 = projectedPoints[i + 2]
+
+        // Draw thick lines for each edge
+        drawThickLine(png, p1, p2, [255, 0, 0], 2) // Red lines
+        drawThickLine(png, p2, p3, [255, 0, 0], 2)
+        drawThickLine(png, p3, p1, [255, 0, 0], 2)
         trianglesDrawn++
       }
     }
 
     console.log(`Drew ${trianglesDrawn} triangle wireframes for ${cameraPos.name}`)
+
+    // Draw bounding box for reference
+    const corners = [
+      [minX - centerX, minY - centerY, minZ - centerZ],
+      [maxX - centerX, minY - centerY, minZ - centerZ],
+      [maxX - centerX, maxY - centerY, minZ - centerZ],
+      [minX - centerX, maxY - centerY, minZ - centerZ],
+      [minX - centerX, minY - centerY, maxZ - centerZ],
+      [maxX - centerX, minY - centerY, maxZ - centerZ],
+      [maxX - centerX, maxY - centerY, maxZ - centerZ],
+      [minX - centerX, maxY - centerY, maxZ - centerZ],
+    ]
+
+    const projectedCorners = corners.map(([x, y, z]) => {
+      let screenX, screenY
+      switch (cameraPos.name) {
+        case "front":
+          screenX = x
+          screenY = y
+          break
+        case "back":
+          screenX = -x
+          screenY = y
+          break
+        case "right":
+          screenX = z
+          screenY = y
+          break
+        case "left":
+          screenX = -z
+          screenY = y
+          break
+        case "top":
+          screenX = x
+          screenY = z
+          break
+        case "bottom":
+          screenX = x
+          screenY = -z
+          break
+        default:
+          const angle = index * (Math.PI / 8)
+          const cosA = Math.cos(angle)
+          const sinA = Math.sin(angle)
+          screenX = x * cosA + z * sinA
+          screenY = y + (x * sinA - z * cosA) * 0.5
+          break
+      }
+      return [Math.round(width / 2 + screenX * scale), Math.round(height / 2 - screenY * scale)]
+    })
+
+    // Draw bounding box edges in green
+    const boxEdges = [
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 0], // bottom face
+      [4, 5],
+      [5, 6],
+      [6, 7],
+      [7, 4], // top face
+      [0, 4],
+      [1, 5],
+      [2, 6],
+      [3, 7], // vertical edges
+    ]
+
+    for (const [i, j] of boxEdges) {
+      drawThickLine(png, projectedCorners[i], projectedCorners[j], [0, 255, 0], 1) // Green bounding box
+    }
 
     // Convert to base64
     const pngBuffer = PNG.sync.write(png)
@@ -487,8 +541,8 @@ async function renderModelAsPNG(
   }
 }
 
-// Simple line drawing function
-function drawLine(png: PNG, p1: number[], p2: number[], color: number[]) {
+// Thick line drawing function
+function drawThickLine(png: PNG, p1: number[], p2: number[], color: number[], thickness = 1) {
   const dx = Math.abs(p2[0] - p1[0])
   const dy = Math.abs(p2[1] - p1[1])
   const sx = p1[0] < p2[0] ? 1 : -1
@@ -499,12 +553,19 @@ function drawLine(png: PNG, p1: number[], p2: number[], color: number[]) {
   let y = p1[1]
 
   while (true) {
-    if (x >= 0 && x < png.width && y >= 0 && y < png.height) {
-      const idx = (png.width * y + x) << 2
-      png.data[idx] = color[0]
-      png.data[idx + 1] = color[1]
-      png.data[idx + 2] = color[2]
-      png.data[idx + 3] = 255
+    // Draw thick point
+    for (let ty = -thickness; ty <= thickness; ty++) {
+      for (let tx = -thickness; tx <= thickness; tx++) {
+        const px = x + tx
+        const py = y + ty
+        if (px >= 0 && px < png.width && py >= 0 && py < png.height) {
+          const idx = (png.width * py + px) << 2
+          png.data[idx] = color[0]
+          png.data[idx + 1] = color[1]
+          png.data[idx + 2] = color[2]
+          png.data[idx + 3] = 255
+        }
+      }
     }
 
     if (x === p2[0] && y === p2[1]) break
