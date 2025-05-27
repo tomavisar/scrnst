@@ -307,9 +307,20 @@ async function renderModelAsPNG(
     console.log(`Model center: (${centerX}, ${centerY}, ${centerZ})`)
     console.log(`Model size: ${modelSize}`)
 
-    // Use a very large scale to make sure we see SOMETHING
-    const scale = 100 // Fixed large scale
-    console.log(`Using fixed scale: ${scale}`)
+    // Calculate proper scale based on actual model size
+    const modelSizeX = maxX - minX
+    const modelSizeY = maxY - minY
+    const modelSizeZ = maxZ - minZ
+    const maxModelDimension = Math.max(modelSizeX, modelSizeY, modelSizeZ)
+
+    console.log(`Model dimensions: X=${modelSizeX.toFixed(2)}, Y=${modelSizeY.toFixed(2)}, Z=${modelSizeZ.toFixed(2)}`)
+    console.log(`Max dimension: ${maxModelDimension.toFixed(2)}`)
+
+    // Use 80% of the smaller image dimension, divided by the largest model dimension
+    const imageSize = Math.min(width, height)
+    const scale = maxModelDimension > 0 ? (imageSize * 0.8) / maxModelDimension : 100
+
+    console.log(`Image size: ${imageSize}, calculated scale: ${scale.toFixed(2)}`)
 
     // Draw a test pattern first to make sure PNG generation works
     console.log("Drawing test pattern...")
@@ -331,7 +342,7 @@ async function renderModelAsPNG(
     let pixelsDrawn = 0
     let trianglesProcessed = 0
 
-    console.log("Processing triangles...")
+    console.log("Processing triangles with proper scaling...")
     for (let i = 0; i < vertices.length; i += 9) {
       trianglesProcessed++
 
@@ -348,52 +359,92 @@ async function renderModelAsPNG(
       const v3y = vertices[i + 7] - centerY
       const v3z = vertices[i + 8] - centerZ
 
-      // Simple orthographic projection - just use X,Y coordinates
-      const p1x = Math.round(width / 2 + v1x * scale)
-      const p1y = Math.round(height / 2 - v1y * scale)
+      // Project based on camera view
+      const screenCoords = []
 
-      const p2x = Math.round(width / 2 + v2x * scale)
-      const p2y = Math.round(height / 2 - v2y * scale)
+      for (let j = 0; j < 3; j++) {
+        const vx = j === 0 ? v1x : j === 1 ? v2x : v3x
+        const vy = j === 0 ? v1y : j === 1 ? v2y : v3y
+        const vz = j === 0 ? v1z : j === 1 ? v2z : v3z
 
-      const p3x = Math.round(width / 2 + v3x * scale)
-      const p3y = Math.round(height / 2 - v3y * scale)
+        let screenX, screenY
 
-      // Log first few triangles
-      if (trianglesProcessed <= 3) {
-        console.log(
-          `Triangle ${trianglesProcessed}: (${v1x.toFixed(2)},${v1y.toFixed(2)},${v1z.toFixed(2)}) -> (${p1x},${p1y})`,
-        )
-        console.log(`                    (${v2x.toFixed(2)},${v2y.toFixed(2)},${v2z.toFixed(2)}) -> (${p2x},${p2y})`)
-        console.log(`                    (${v3x.toFixed(2)},${v3y.toFixed(2)},${v3z.toFixed(2)}) -> (${p3x},${p3y})`)
+        switch (cameraPos.name) {
+          case "front":
+            screenX = vx
+            screenY = vy
+            break
+          case "back":
+            screenX = -vx
+            screenY = vy
+            break
+          case "right":
+            screenX = vz
+            screenY = vy
+            break
+          case "left":
+            screenX = -vz
+            screenY = vy
+            break
+          case "top":
+            screenX = vx
+            screenY = vz
+            break
+          case "bottom":
+            screenX = vx
+            screenY = -vz
+            break
+          default:
+            // Isometric view
+            screenX = vx * 0.866 + vz * 0.5
+            screenY = vy + (vx * 0.5 - vz * 0.866) * 0.5
+            break
+        }
+
+        const pixelX = Math.round(width / 2 + screenX * scale)
+        const pixelY = Math.round(height / 2 - screenY * scale)
+        screenCoords.push([pixelX, pixelY])
       }
 
-      // Draw the triangle vertices as large squares
-      const points = [
-        [p1x, p1y],
-        [p2x, p2y],
-        [p3x, p3y],
-      ]
+      // Log first few triangles with better info
+      if (trianglesProcessed <= 3) {
+        console.log(`Triangle ${trianglesProcessed}:`)
+        console.log(
+          `  3D: (${v1x.toFixed(2)},${v1y.toFixed(2)},${v1z.toFixed(2)}) -> 2D: (${screenCoords[0][0]},${screenCoords[0][1]})`,
+        )
+        console.log(
+          `  3D: (${v2x.toFixed(2)},${v2y.toFixed(2)},${v2z.toFixed(2)}) -> 2D: (${screenCoords[1][0]},${screenCoords[1][1]})`,
+        )
+        console.log(
+          `  3D: (${v3x.toFixed(2)},${v3y.toFixed(2)},${v3z.toFixed(2)}) -> 2D: (${screenCoords[2][0]},${screenCoords[2][1]})`,
+        )
+      }
 
-      for (const [px, py] of points) {
-        // Draw a 5x5 square for each vertex
-        for (let dy = -2; dy <= 2; dy++) {
-          for (let dx = -2; dx <= 2; dx++) {
-            const x = px + dx
-            const y = py + dy
-            if (x >= 0 && x < width && y >= 0 && y < height) {
-              const idx = (width * y + x) << 2
-              png.data[idx] = 0 // R (black squares)
-              png.data[idx + 1] = 0 // G
-              png.data[idx + 2] = 255 // B (blue squares)
-              png.data[idx + 3] = 255 // A
-              pixelsDrawn++
+      // Draw the triangle vertices as dots
+      for (const [px, py] of screenCoords) {
+        if (px >= 0 && px < width && py >= 0 && py < height) {
+          // Draw a 3x3 square for each vertex
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const x = px + dx
+              const y = py + dy
+              if (x >= 0 && x < width && y >= 0 && y < height) {
+                const idx = (width * y + x) << 2
+                png.data[idx] = 0 // R (black dots)
+                png.data[idx + 1] = 0 // G
+                png.data[idx + 2] = 255 // B (blue dots)
+                png.data[idx + 3] = 255 // A
+                pixelsDrawn++
+              }
             }
           }
         }
       }
 
-      // Also fill the triangle
-      fillTriangleDebug(png, [p1x, p1y], [p2x, p2y], [p3x, p3y], [0, 255, 0])
+      // Fill the triangle
+      if (screenCoords.length === 3) {
+        fillTriangleDebug(png, screenCoords[0], screenCoords[1], screenCoords[2], [0, 255, 0])
+      }
     }
 
     console.log(`Processed ${trianglesProcessed} triangles`)
