@@ -277,7 +277,7 @@ function transformPoint(point: number[], matrix: number[]): number[] {
   ]
 }
 
-// Ultra-aggressive renderer that shows everything
+// Ultra-simple solid triangle renderer
 async function renderModelAsPNG(
   vertices: number[],
   normals: number[],
@@ -287,7 +287,7 @@ async function renderModelAsPNG(
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} - Aggressive wireframe mode`)
+    console.log(`Rendering ${cameraPos.name} - SOLID TRIANGLES ONLY`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
@@ -296,13 +296,13 @@ async function renderModelAsPNG(
     // Create PNG instance
     const png = new PNG({ width, height })
 
-    // Fill with white background
+    // Fill with light gray background
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2
-        png.data[idx] = 255 // R
-        png.data[idx + 1] = 255 // G
-        png.data[idx + 2] = 255 // B
+        png.data[idx] = 220 // R
+        png.data[idx + 1] = 220 // G
+        png.data[idx + 2] = 220 // B
         png.data[idx + 3] = 255 // A
       }
     }
@@ -328,197 +328,81 @@ async function renderModelAsPNG(
     const centerY = (minY + maxY) / 2
     const centerZ = (minZ + maxZ) / 2
     const modelSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
+    const scale = (Math.min(width, height) * 0.7) / modelSize
 
-    console.log(
-      `Model bounds: X(${minX.toFixed(2)} to ${maxX.toFixed(2)}), Y(${minY.toFixed(2)} to ${maxY.toFixed(2)}), Z(${minZ.toFixed(2)} to ${maxZ.toFixed(2)})`,
-    )
-    console.log(`Model center: (${centerX.toFixed(2)}, ${centerY.toFixed(2)}, ${centerZ.toFixed(2)})`)
-    console.log(`Model size: ${modelSize.toFixed(2)}`)
+    console.log(`Model size: ${modelSize.toFixed(2)}, Scale: ${scale.toFixed(2)}`)
 
-    // Use a larger scale to make sure we see the model
-    const scale = (Math.min(width, height) * 0.8) / modelSize
-    console.log(`Scale: ${scale.toFixed(2)}`)
+    let trianglesFilled = 0
 
-    // Collect all projected points first
-    const projectedPoints: Array<[number, number]> = []
+    // Process every triangle and fill it
+    for (let i = 0; i < vertices.length; i += 9) {
+      const triangle = []
 
-    for (let i = 0; i < vertices.length; i += 3) {
-      const x = vertices[i] - centerX
-      const y = vertices[i + 1] - centerY
-      const z = vertices[i + 2] - centerZ
+      // Get the 3 vertices of the triangle
+      for (let j = 0; j < 3; j++) {
+        const x = vertices[i + j * 3] - centerX
+        const y = vertices[i + j * 3 + 1] - centerY
+        const z = vertices[i + j * 3 + 2] - centerZ
 
-      // Simple orthographic projection based on camera angle
-      let screenX, screenY
-
-      switch (cameraPos.name) {
-        case "front":
-          screenX = x
-          screenY = y
-          break
-        case "back":
-          screenX = -x
-          screenY = y
-          break
-        case "right":
-          screenX = z
-          screenY = y
-          break
-        case "left":
-          screenX = -z
-          screenY = y
-          break
-        case "top":
-          screenX = x
-          screenY = z
-          break
-        case "bottom":
-          screenX = x
-          screenY = -z
-          break
-        default:
-          // Isometric views with distinct angles based on index
-          const angle = index * (Math.PI / 8)
-          const cosA = Math.cos(angle)
-          const sinA = Math.sin(angle)
-          screenX = x * cosA + z * sinA
-          screenY = y + (x * sinA - z * cosA) * 0.5
-          break
-      }
-
-      // Convert to screen coordinates
-      const pixelX = Math.round(width / 2 + screenX * scale)
-      const pixelY = Math.round(height / 2 - screenY * scale)
-      projectedPoints.push([pixelX, pixelY])
-    }
-
-    console.log(`Projected ${projectedPoints.length} points for ${cameraPos.name}`)
-
-    // Draw all vertices as large dots
-    let pointsDrawn = 0
-    for (let i = 0; i < projectedPoints.length; i++) {
-      const [pixelX, pixelY] = projectedPoints[i]
-
-      // Draw a 3x3 square for each vertex
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const x = pixelX + dx
-          const y = pixelY + dy
-          if (x >= 0 && x < width && y >= 0 && y < height) {
-            const idx = (width * y + x) << 2
-            png.data[idx] = 0 // R (black dots)
-            png.data[idx + 1] = 0 // G
-            png.data[idx + 2] = 255 // B (blue dots)
-            png.data[idx + 3] = 255 // A
-          }
+        // Simple orthographic projection
+        let screenX, screenY
+        switch (cameraPos.name) {
+          case "front":
+            screenX = x
+            screenY = y
+            break
+          case "back":
+            screenX = -x
+            screenY = y
+            break
+          case "right":
+            screenX = z
+            screenY = y
+            break
+          case "left":
+            screenX = -z
+            screenY = y
+            break
+          case "top":
+            screenX = x
+            screenY = z
+            break
+          case "bottom":
+            screenX = x
+            screenY = -z
+            break
+          default:
+            // Isometric with unique angle per view
+            const angle = index * (Math.PI / 8)
+            screenX = x * Math.cos(angle) + z * Math.sin(angle)
+            screenY = y + (x * Math.sin(angle) - z * Math.cos(angle)) * 0.5
+            break
         }
+
+        const pixelX = Math.round(width / 2 + screenX * scale)
+        const pixelY = Math.round(height / 2 - screenY * scale)
+        triangle.push([pixelX, pixelY])
       }
-      pointsDrawn++
-    }
 
-    console.log(`Drew ${pointsDrawn} vertex points for ${cameraPos.name}`)
-
-    // Draw ALL triangle wireframes with thick lines
-    let trianglesDrawn = 0
-    for (let i = 0; i < projectedPoints.length; i += 3) {
-      if (i + 2 < projectedPoints.length) {
-        const p1 = projectedPoints[i]
-        const p2 = projectedPoints[i + 1]
-        const p3 = projectedPoints[i + 2]
-
-        // Draw thick lines for each edge
-        drawThickLine(png, p1, p2, [255, 0, 0], 2) // Red lines
-        drawThickLine(png, p2, p3, [255, 0, 0], 2)
-        drawThickLine(png, p3, p1, [255, 0, 0], 2)
-        trianglesDrawn++
+      // Fill the triangle with solid color
+      if (triangle.length === 3) {
+        fillTriangleSimple(png, triangle[0], triangle[1], triangle[2], [80, 120, 160])
+        trianglesFilled++
       }
     }
 
-    console.log(`Drew ${trianglesDrawn} triangle wireframes for ${cameraPos.name}`)
-
-    // Draw bounding box for reference
-    const corners = [
-      [minX - centerX, minY - centerY, minZ - centerZ],
-      [maxX - centerX, minY - centerY, minZ - centerZ],
-      [maxX - centerX, maxY - centerY, minZ - centerZ],
-      [minX - centerX, maxY - centerY, minZ - centerZ],
-      [minX - centerX, minY - centerY, maxZ - centerZ],
-      [maxX - centerX, minY - centerY, maxZ - centerZ],
-      [maxX - centerX, maxY - centerY, maxZ - centerZ],
-      [minX - centerX, maxY - centerY, maxZ - centerZ],
-    ]
-
-    const projectedCorners = corners.map(([x, y, z]) => {
-      let screenX, screenY
-      switch (cameraPos.name) {
-        case "front":
-          screenX = x
-          screenY = y
-          break
-        case "back":
-          screenX = -x
-          screenY = y
-          break
-        case "right":
-          screenX = z
-          screenY = y
-          break
-        case "left":
-          screenX = -z
-          screenY = y
-          break
-        case "top":
-          screenX = x
-          screenY = z
-          break
-        case "bottom":
-          screenX = x
-          screenY = -z
-          break
-        default:
-          const angle = index * (Math.PI / 8)
-          const cosA = Math.cos(angle)
-          const sinA = Math.sin(angle)
-          screenX = x * cosA + z * sinA
-          screenY = y + (x * sinA - z * cosA) * 0.5
-          break
-      }
-      return [Math.round(width / 2 + screenX * scale), Math.round(height / 2 - screenY * scale)]
-    })
-
-    // Draw bounding box edges in green
-    const boxEdges = [
-      [0, 1],
-      [1, 2],
-      [2, 3],
-      [3, 0], // bottom face
-      [4, 5],
-      [5, 6],
-      [6, 7],
-      [7, 4], // top face
-      [0, 4],
-      [1, 5],
-      [2, 6],
-      [3, 7], // vertical edges
-    ]
-
-    for (const [i, j] of boxEdges) {
-      drawThickLine(png, projectedCorners[i], projectedCorners[j], [0, 255, 0], 1) // Green bounding box
-    }
+    console.log(`Filled ${trianglesFilled} solid triangles for ${cameraPos.name}`)
 
     // Convert to base64
     const pngBuffer = PNG.sync.write(png)
     const base64 = Buffer.from(pngBuffer).toString("base64")
     const dataUrl = `data:image/png;base64,${base64}`
 
-    return {
-      dataUrl,
-      name: cameraPos.name,
-      description: cameraPos.description,
-    }
+    return { dataUrl, name: cameraPos.name, description: cameraPos.description }
   } catch (error) {
     console.error(`Error rendering ${cameraPos.name}:`, error)
 
-    // Create error PNG with red background
+    // Create simple error image
     const png = new PNG({ width, height })
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -532,7 +416,6 @@ async function renderModelAsPNG(
 
     const pngBuffer = PNG.sync.write(png)
     const base64 = Buffer.from(pngBuffer).toString("base64")
-
     return {
       dataUrl: `data:image/png;base64,${base64}`,
       name: cameraPos.name,
@@ -541,45 +424,38 @@ async function renderModelAsPNG(
   }
 }
 
-// Thick line drawing function
-function drawThickLine(png: PNG, p1: number[], p2: number[], color: number[], thickness = 1) {
-  const dx = Math.abs(p2[0] - p1[0])
-  const dy = Math.abs(p2[1] - p1[1])
-  const sx = p1[0] < p2[0] ? 1 : -1
-  const sy = p1[1] < p2[1] ? 1 : -1
-  let err = dx - dy
+// Simple triangle fill function
+function fillTriangleSimple(png: PNG, p1: number[], p2: number[], p3: number[], color: number[]) {
+  // Find bounding box
+  const minX = Math.max(0, Math.floor(Math.min(p1[0], p2[0], p3[0])))
+  const maxX = Math.min(png.width - 1, Math.ceil(Math.max(p1[0], p2[0], p3[0])))
+  const minY = Math.max(0, Math.floor(Math.min(p1[1], p2[1], p3[1])))
+  const maxY = Math.min(png.height - 1, Math.ceil(Math.max(p1[1], p2[1], p3[1])))
 
-  let x = p1[0]
-  let y = p1[1]
-
-  while (true) {
-    // Draw thick point
-    for (let ty = -thickness; ty <= thickness; ty++) {
-      for (let tx = -thickness; tx <= thickness; tx++) {
-        const px = x + tx
-        const py = y + ty
-        if (px >= 0 && px < png.width && py >= 0 && py < png.height) {
-          const idx = (png.width * py + px) << 2
-          png.data[idx] = color[0]
-          png.data[idx + 1] = color[1]
-          png.data[idx + 2] = color[2]
-          png.data[idx + 3] = 255
-        }
+  // Fill every pixel in the triangle
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (isPointInTriangle([x, y], p1, p2, p3)) {
+        const idx = (png.width * y + x) << 2
+        png.data[idx] = color[0]
+        png.data[idx + 1] = color[1]
+        png.data[idx + 2] = color[2]
+        png.data[idx + 3] = 255
       }
     }
-
-    if (x === p2[0] && y === p2[1]) break
-
-    const e2 = 2 * err
-    if (e2 > -dy) {
-      err -= dy
-      x += sx
-    }
-    if (e2 < dx) {
-      err += dx
-      y += sy
-    }
   }
+}
+
+// Simple point-in-triangle test
+function isPointInTriangle(p: number[], a: number[], b: number[], c: number[]): boolean {
+  const denom = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+  if (Math.abs(denom) < 1e-10) return false
+
+  const alpha = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / denom
+  const beta = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / denom
+  const gamma = 1 - alpha - beta
+
+  return alpha >= 0 && beta >= 0 && gamma >= 0
 }
 
 export async function OPTIONS(request: NextRequest) {
