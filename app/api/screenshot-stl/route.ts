@@ -109,6 +109,7 @@ function parseBinarySTLWithCount(buffer: ArrayBuffer, triangleCount: number) {
   const view = new DataView(buffer)
   let offset = 84
   const vertices: number[] = []
+  const normals: number[] = []
 
   console.log(`Parsing ${triangleCount} triangles from binary STL`)
 
@@ -118,8 +119,17 @@ function parseBinarySTLWithCount(buffer: ArrayBuffer, triangleCount: number) {
       break
     }
 
-    // Skip normal (12 bytes)
+    // Read normal (12 bytes)
+    const nx = view.getFloat32(offset, true)
+    const ny = view.getFloat32(offset + 4, true)
+    const nz = view.getFloat32(offset + 8, true)
     offset += 12
+
+    if (isFinite(nx) && isFinite(ny) && isFinite(nz)) {
+      normals.push(nx, ny, nz)
+    } else {
+      normals.push(0, 0, 1) // Default normal
+    }
 
     // Read 3 vertices (36 bytes)
     for (let j = 0; j < 3; j++) {
@@ -142,7 +152,7 @@ function parseBinarySTLWithCount(buffer: ArrayBuffer, triangleCount: number) {
   const actualTriangles = vertices.length / 9
   console.log(`Binary parsing: ${actualTriangles} triangles, ${vertices.length / 3} vertices`)
 
-  return { vertices, triangleCount: actualTriangles }
+  return { vertices, normals, triangleCount: actualTriangles }
 }
 
 // Enhanced ASCII STL parser
@@ -153,7 +163,9 @@ function parseASCIISTL(buffer: ArrayBuffer) {
 
     const lines = text.split(/\r?\n/)
     const vertices: number[] = []
+    const normals: number[] = []
     let triangleCount = 0
+    let currentNormal = [0, 0, 1]
 
     const hasSTLKeywords = text.includes("vertex") || text.includes("facet") || text.includes("normal")
 
@@ -166,8 +178,16 @@ function parseASCIISTL(buffer: ArrayBuffer) {
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
       const line = lines[lineNum].trim()
 
+      if (line.startsWith("facet normal")) {
+        const numbers = line.match(/-?\d+\.?\d*([eE][+-]?\d+)?/g)
+        if (numbers && numbers.length >= 3) {
+          currentNormal = [Number.parseFloat(numbers[0]), Number.parseFloat(numbers[1]), Number.parseFloat(numbers[2])]
+        }
+      }
+
       if (line === "endfacet" || line.includes("endfacet")) {
         triangleCount++
+        normals.push(...currentNormal)
         continue
       }
 
@@ -191,7 +211,7 @@ function parseASCIISTL(buffer: ArrayBuffer) {
       throw new Error("No valid vertices found")
     }
 
-    return { vertices, triangleCount: Math.max(triangleCount, vertices.length / 9) }
+    return { vertices, normals, triangleCount: Math.max(triangleCount, vertices.length / 9) }
   } catch (error) {
     throw new Error(`ASCII parsing failed: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
@@ -227,16 +247,17 @@ function generateNamedCameraPositions(radius = 5) {
   return positions
 }
 
-// PNG renderer using pngjs library - FIXED VERSION
+// Solid surface renderer with lighting
 async function renderModelAsPNG(
   vertices: number[],
+  normals: number[],
   cameraPos: { x: number; y: number; z: number; name: string; description: string },
   width = 512,
   height = 512,
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} as PNG`)
+    console.log(`Rendering ${cameraPos.name} as solid surface`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
@@ -245,13 +266,13 @@ async function renderModelAsPNG(
     // Create PNG instance
     const png = new PNG({ width, height })
 
-    // Fill with white background
+    // Fill with light gray background
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2
-        png.data[idx] = 255 // R
-        png.data[idx + 1] = 255 // G
-        png.data[idx + 2] = 255 // B
+        png.data[idx] = 240 // R
+        png.data[idx + 1] = 240 // G
+        png.data[idx + 2] = 240 // B
         png.data[idx + 3] = 255 // A
       }
     }
@@ -284,54 +305,94 @@ async function renderModelAsPNG(
 
     const scale = (Math.min(width, height) * 0.8) / maxDimension
 
-    // Simple orthographic projection - FIXED
+    // Light direction (from top-right-front)
+    const lightDir = [0.5, 0.7, 0.5]
+    const lightMagnitude = Math.sqrt(lightDir[0] ** 2 + lightDir[1] ** 2 + lightDir[2] ** 2)
+    lightDir[0] /= lightMagnitude
+    lightDir[1] /= lightMagnitude
+    lightDir[2] /= lightMagnitude
+
+    // Create depth buffer
+    const depthBuffer = new Float32Array(width * height)
+    depthBuffer.fill(Number.NEGATIVE_INFINITY)
+
+    // Render triangles with solid fill and lighting
     for (let i = 0; i < vertices.length; i += 9) {
       const triangle = []
 
-      // Get triangle vertices
+      // Get triangle vertices and transform them
       for (let j = 0; j < 3; j++) {
         const x = vertices[i + j * 3] - centerX
         const y = vertices[i + j * 3 + 1] - centerY
         const z = vertices[i + j * 3 + 2] - centerZ
 
         // Project to 2D based on camera view
-        let screenX, screenY
+        let screenX, screenY, depth
 
         switch (cameraPos.name) {
           case "front":
-          case "back":
             screenX = x * scale
             screenY = y * scale
+            depth = z
+            break
+          case "back":
+            screenX = -x * scale
+            screenY = y * scale
+            depth = -z
             break
           case "right":
-          case "left":
             screenX = z * scale
             screenY = y * scale
+            depth = -x
+            break
+          case "left":
+            screenX = -z * scale
+            screenY = y * scale
+            depth = x
             break
           case "top":
-          case "bottom":
             screenX = x * scale
             screenY = z * scale
+            depth = -y
+            break
+          case "bottom":
+            screenX = x * scale
+            screenY = -z * scale
+            depth = y
             break
           default:
             // Isometric views
             screenX = (x + z * 0.5) * scale
             screenY = (y + z * 0.3) * scale
+            depth = x + y + z
             break
         }
 
-        triangle.push([Math.round(width / 2 + screenX), Math.round(height / 2 - screenY)])
+        triangle.push([Math.round(width / 2 + screenX), Math.round(height / 2 - screenY), depth])
       }
 
-      // Draw triangle wireframe in black
+      // Get triangle normal for lighting
+      let normal = [0, 0, 1]
+      if (normals.length > (i / 9) * 3) {
+        const normalIndex = (i / 9) * 3
+        normal = [normals[normalIndex], normals[normalIndex + 1], normals[normalIndex + 2]]
+      }
+
+      // Calculate lighting intensity
+      const dotProduct = normal[0] * lightDir[0] + normal[1] * lightDir[1] + normal[2] * lightDir[2]
+      const lightIntensity = Math.max(0.3, Math.abs(dotProduct)) // Ambient + diffuse
+
+      // Calculate color based on lighting
+      const baseColor = 120 // Medium gray
+      const finalColor = Math.round(baseColor * lightIntensity)
+
+      // Fill triangle
       if (triangle.length === 3) {
-        drawLinePNG(png, triangle[0], triangle[1])
-        drawLinePNG(png, triangle[1], triangle[2])
-        drawLinePNG(png, triangle[2], triangle[0])
+        fillTriangle(png, depthBuffer, triangle, [finalColor, finalColor, finalColor + 20])
       }
     }
 
-    console.log(`Successfully rendered ${cameraPos.name} as PNG`)
+    console.log(`Successfully rendered ${cameraPos.name} as solid surface`)
 
     // Convert to base64
     const pngBuffer = PNG.sync.write(png)
@@ -349,11 +410,11 @@ async function renderModelAsPNG(
     // Create error PNG
     const png = new PNG({ width, height })
 
-    // Fill with light gray
+    // Fill with light red
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (width * y + x) << 2
-        png.data[idx] = 200
+        png.data[idx] = 255
         png.data[idx + 1] = 200
         png.data[idx + 2] = 200
         png.data[idx + 3] = 255
@@ -371,41 +432,63 @@ async function renderModelAsPNG(
   }
 }
 
-// Simple line drawing for PNG
-function drawLinePNG(png: PNG, start: number[], end: number[]) {
-  const [x0, y0] = start
-  const [x1, y1] = end
+// Fill triangle with depth testing
+function fillTriangle(png: PNG, depthBuffer: Float32Array, triangle: number[][], color: number[]) {
+  const [p1, p2, p3] = triangle
 
-  const dx = Math.abs(x1 - x0)
-  const dy = Math.abs(y1 - y0)
-  const sx = x0 < x1 ? 1 : -1
-  const sy = y0 < y1 ? 1 : -1
-  let err = dx - dy
+  const minX = Math.max(0, Math.floor(Math.min(p1[0], p2[0], p3[0])))
+  const maxX = Math.min(png.width - 1, Math.ceil(Math.max(p1[0], p2[0], p3[0])))
+  const minY = Math.max(0, Math.floor(Math.min(p1[1], p2[1], p3[1])))
+  const maxY = Math.min(png.height - 1, Math.ceil(Math.max(p1[1], p2[1], p3[1])))
 
-  let x = x0
-  let y = y0
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (pointInTriangle([x, y], [p1[0], p1[1]], [p2[0], p2[1]], [p3[0], p3[1]])) {
+        // Calculate depth at this point
+        const depth = interpolateDepth([x, y], triangle)
+        const depthIndex = y * png.width + x
 
-  while (true) {
-    if (x >= 0 && x < png.width && y >= 0 && y < png.height) {
-      const idx = (png.width * y + x) << 2
-      png.data[idx] = 0 // Black line
-      png.data[idx + 1] = 0
-      png.data[idx + 2] = 0
-      png.data[idx + 3] = 255
-    }
+        // Depth test
+        if (depth > depthBuffer[depthIndex]) {
+          depthBuffer[depthIndex] = depth
 
-    if (x === x1 && y === y1) break
-
-    const e2 = 2 * err
-    if (e2 > -dy) {
-      err -= dy
-      x += sx
-    }
-    if (e2 < dx) {
-      err += dx
-      y += sy
+          const idx = (png.width * y + x) << 2
+          png.data[idx] = color[0]
+          png.data[idx + 1] = color[1]
+          png.data[idx + 2] = color[2]
+          png.data[idx + 3] = 255
+        }
+      }
     }
   }
+}
+
+// Interpolate depth within triangle
+function interpolateDepth(point: number[], triangle: number[][]): number {
+  const [p1, p2, p3] = triangle
+  const [x, y] = point
+
+  // Barycentric coordinates
+  const denom = (p2[1] - p3[1]) * (p1[0] - p3[0]) + (p3[0] - p2[0]) * (p1[1] - p3[1])
+  if (Math.abs(denom) < 1e-10) return p1[2]
+
+  const a = ((p2[1] - p3[1]) * (x - p3[0]) + (p3[0] - p2[0]) * (y - p3[1])) / denom
+  const b = ((p3[1] - p1[1]) * (x - p3[0]) + (p1[0] - p3[0]) * (y - p3[1])) / denom
+  const c = 1 - a - b
+
+  return a * p1[2] + b * p2[2] + c * p3[2]
+}
+
+// Point in triangle test
+function pointInTriangle(p: number[], a: number[], b: number[], c: number[]): boolean {
+  const denom = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+  if (Math.abs(denom) < 1e-10) return false
+
+  const alpha = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / denom
+  const beta = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / denom
+  const gamma = 1 - alpha - beta
+
+  return alpha >= 0 && beta >= 0 && gamma >= 0
 }
 
 export async function OPTIONS(request: NextRequest) {
@@ -447,10 +530,11 @@ export async function POST(request: NextRequest) {
       throw new Error(`Failed to read file: ${error instanceof Error ? error.message : "Unknown error"}`)
     }
 
-    let vertices: number[], triangleCount: number
+    let vertices: number[], normals: number[], triangleCount: number
     try {
       const result = parseSTL(arrayBuffer)
       vertices = result.vertices
+      normals = result.normals || []
       triangleCount = result.triangleCount
       console.log(`Parsed STL: ${triangleCount} triangles, ${vertices.length / 3} vertices`)
     } catch (parseError) {
@@ -482,7 +566,7 @@ export async function POST(request: NextRequest) {
     const cameraPositions = generateNamedCameraPositions(5)
     console.log("Generated camera positions:", cameraPositions.length)
 
-    // Render screenshots as PNG
+    // Render screenshots as solid surfaces
     const screenshots: string[] = []
     const viewNames: string[] = []
     const viewDescriptions: string[] = []
@@ -491,7 +575,7 @@ export async function POST(request: NextRequest) {
       console.log(`Rendering view ${i + 1}/${cameraPositions.length}: ${cameraPositions[i].name}`)
 
       try {
-        const result = await renderModelAsPNG(vertices, cameraPositions[i], 512, 512, i)
+        const result = await renderModelAsPNG(vertices, normals, cameraPositions[i], 512, 512, i)
         screenshots.push(result.dataUrl)
         viewNames.push(result.name)
         viewDescriptions.push(result.description)
@@ -504,7 +588,7 @@ export async function POST(request: NextRequest) {
         for (let y = 0; y < 512; y++) {
           for (let x = 0; x < 512; x++) {
             const idx = (512 * y + x) << 2
-            png.data[idx] = 200
+            png.data[idx] = 255
             png.data[idx + 1] = 200
             png.data[idx + 2] = 200
             png.data[idx + 3] = 255
@@ -584,8 +668,8 @@ export async function GET() {
       method: "POST",
       status: "operational",
       timestamp: new Date().toISOString(),
-      version: "10.0.0",
-      format: "PNG images",
+      version: "11.0.0",
+      format: "PNG images with solid surfaces and lighting",
     },
     {
       headers: corsHeaders,
