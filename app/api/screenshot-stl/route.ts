@@ -275,7 +275,7 @@ function createBMP(imageData: Uint8ClampedArray, width: number, height: number):
   return bytes
 }
 
-// Simple PNG-like renderer using BMP format
+// Enhanced renderer with wireframe fallback
 async function renderModelAsPNG(
   vertices: number[],
   cameraPos: { x: number; y: number; z: number; name: string; description: string },
@@ -321,86 +321,104 @@ async function renderModelAsPNG(
     const centerX = (minX + maxX) / 2
     const centerY = (minY + maxY) / 2
     const centerZ = (minZ + maxZ) / 2
-    const maxDimension = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
+    const sizeX = maxX - minX
+    const sizeY = maxY - minY
+    const sizeZ = maxZ - minZ
+    const maxDimension = Math.max(sizeX, sizeY, sizeZ)
+
+    console.log(`Model bounds: ${sizeX.toFixed(2)} x ${sizeY.toFixed(2)} x ${sizeZ.toFixed(2)}`)
+    console.log(`Model center: (${centerX.toFixed(2)}, ${centerY.toFixed(2)}, ${centerZ.toFixed(2)})`)
 
     if (maxDimension === 0) {
       throw new Error("Model has zero dimensions")
     }
 
-    const scale = (Math.min(width, height) * 0.6) / maxDimension
+    // Use aggressive scaling to ensure visibility
+    const scale = (Math.min(width, height) * 0.9) / maxDimension
+    console.log(`Using scale: ${scale.toFixed(2)}`)
 
-    // Camera transformation
-    let camX = cameraPos.x
-    let camY = cameraPos.y
-    let camZ = cameraPos.z
+    // Simple orthographic projection - no rotation for debugging
+    const projectedPoints: [number, number][] = []
 
-    const camDistance = Math.sqrt(camX * camX + camY * camY + camZ * camZ)
-    if (camDistance < 1) {
-      camX = 5
-      camY = 0
-      camZ = 0
+    // Project all vertices to screen space
+    for (let i = 0; i < vertices.length; i += 3) {
+      const x = vertices[i] - centerX
+      const y = vertices[i + 1] - centerY
+      const z = vertices[i + 2] - centerZ
+
+      // Simple projection based on camera position
+      let screenX, screenY
+
+      if (cameraPos.name === "front" || cameraPos.name === "back") {
+        screenX = x * scale
+        screenY = y * scale
+      } else if (cameraPos.name === "right" || cameraPos.name === "left") {
+        screenX = z * scale
+        screenY = y * scale
+      } else if (cameraPos.name === "top" || cameraPos.name === "bottom") {
+        screenX = x * scale
+        screenY = z * scale
+      } else {
+        // Isometric views - simple 2D projection
+        screenX = (x + z * 0.5) * scale
+        screenY = (y + z * 0.3) * scale
+      }
+
+      projectedPoints.push([width / 2 + screenX, height / 2 - screenY])
     }
 
-    const distance = Math.sqrt(camX * camX + camZ * camZ)
-    const cosTheta = distance > 0 ? camX / distance : 1
-    const sinTheta = distance > 0 ? camZ / distance : 0
-    const totalDistance = Math.sqrt(camX * camX + camY * camY + camZ * camZ)
-    const cosPhi = totalDistance > 0 ? distance / totalDistance : 1
-    const sinPhi = totalDistance > 0 ? camY / totalDistance : 0
+    // Draw wireframe of all triangles
+    let trianglesDrawn = 0
+    for (let i = 0; i < projectedPoints.length; i += 3) {
+      if (i + 2 < projectedPoints.length) {
+        const p1 = projectedPoints[i]
+        const p2 = projectedPoints[i + 1]
+        const p3 = projectedPoints[i + 2]
 
-    // Project and render triangles
-    const projectedTriangles: Array<{
-      points: [number, number][]
-      depth: number
-    }> = []
+        // Draw triangle wireframe in black
+        drawLine(imageData, width, height, p1, p2, [0, 0, 0])
+        drawLine(imageData, width, height, p2, p3, [0, 0, 0])
+        drawLine(imageData, width, height, p3, p1, [0, 0, 0])
 
-    for (let i = 0; i < vertices.length; i += 9) {
-      const v1 = [vertices[i] - centerX, vertices[i + 1] - centerY, vertices[i + 2] - centerZ]
-      const v2 = [vertices[i + 3] - centerX, vertices[i + 4] - centerY, vertices[i + 5] - centerZ]
-      const v3 = [vertices[i + 6] - centerX, vertices[i + 7] - centerY, vertices[i + 8] - centerZ]
-
-      const rotatedVertices = [v1, v2, v3].map((v) => {
-        const x1 = v[0] * cosTheta - v[2] * sinTheta
-        const z1 = v[0] * sinTheta + v[2] * cosTheta
-        const y1 = v[1]
-
-        const y2 = y1 * cosPhi - z1 * sinPhi
-        const z2 = y1 * sinPhi + z1 * cosPhi
-
-        return [x1, y2, z2]
-      })
-
-      const screenPoints: [number, number][] = rotatedVertices.map((v) => [
-        width / 2 + v[0] * scale,
-        height / 2 - v[1] * scale,
-      ])
-
-      const avgDepth = (rotatedVertices[0][2] + rotatedVertices[1][2] + rotatedVertices[2][2]) / 3
-
-      projectedTriangles.push({
-        points: screenPoints,
-        depth: avgDepth,
-      })
+        trianglesDrawn++
+      }
     }
 
-    // Sort by depth
-    projectedTriangles.sort((a, b) => a.depth - b.depth)
+    // Also try filled triangles with better visibility
+    for (let i = 0; i < projectedPoints.length; i += 3) {
+      if (i + 2 < projectedPoints.length) {
+        const p1 = projectedPoints[i]
+        const p2 = projectedPoints[i + 1]
+        const p3 = projectedPoints[i + 2]
 
-    // Render triangles
-    projectedTriangles.forEach((triangle) => {
-      const { points, depth } = triangle
+        // Fill with light gray
+        fillTriangleWithColor(imageData, width, height, [p1, p2, p3], [200, 200, 200])
+      }
+    }
 
-      const normalizedDepth = Math.max(0, Math.min(1, (depth + maxDimension) / (2 * maxDimension)))
-      const brightness = Math.floor(80 + normalizedDepth * 120)
+    // Draw bounding box for debugging
+    const boxPoints = [
+      [width / 2 + (minX - centerX) * scale, height / 2 - (minY - centerY) * scale],
+      [width / 2 + (maxX - centerX) * scale, height / 2 - (minY - centerY) * scale],
+      [width / 2 + (maxX - centerX) * scale, height / 2 - (maxY - centerY) * scale],
+      [width / 2 + (minX - centerX) * scale, height / 2 - (maxY - centerY) * scale],
+    ]
 
-      // Fill triangle
-      fillTriangle(imageData, width, height, points, brightness)
-    })
+    // Draw bounding box in red
+    for (let i = 0; i < boxPoints.length; i++) {
+      const start = boxPoints[i] as [number, number]
+      const end = boxPoints[(i + 1) % boxPoints.length] as [number, number]
+      drawLine(imageData, width, height, start, end, [255, 0, 0])
+    }
 
-    // Add text label
-    addTextToImage(imageData, width, height, `${index + 1}. ${cameraPos.name.toUpperCase()}`, 15, 25)
+    // Add comprehensive debug info
+    addTextToImage(imageData, width, height, `${index + 1}. ${cameraPos.name.toUpperCase()}`, 10, 15)
+    addTextToImage(imageData, width, height, `Triangles: ${trianglesDrawn}`, 10, 30)
+    addTextToImage(imageData, width, height, `Scale: ${scale.toFixed(1)}`, 10, 45)
+    addTextToImage(imageData, width, height, `Size: ${maxDimension.toFixed(1)}`, 10, 60)
+    addTextToImage(imageData, width, height, `Vertices: ${vertices.length / 3}`, 10, 75)
 
-    console.log(`Successfully rendered ${cameraPos.name}`)
+    console.log(`Rendered ${cameraPos.name}: ${trianglesDrawn} triangles, scale ${scale.toFixed(2)}`)
 
     // Create BMP and convert to base64
     const bmpData = createBMP(imageData, width, height)
@@ -415,19 +433,21 @@ async function renderModelAsPNG(
   } catch (error) {
     console.error(`Error rendering ${cameraPos.name}:`, error)
 
-    // Create error image
+    // Create error image with more info
     const imageData = new Uint8ClampedArray(width * height * 4)
 
-    // Fill with light gray
+    // Fill with light red
     for (let i = 0; i < imageData.length; i += 4) {
-      imageData[i] = 200
+      imageData[i] = 255
       imageData[i + 1] = 200
       imageData[i + 2] = 200
       imageData[i + 3] = 255
     }
 
-    addTextToImage(imageData, width, height, "Render Error", width / 2 - 50, height / 2 - 10)
-    addTextToImage(imageData, width, height, cameraPos.name, width / 2 - 30, height / 2 + 10)
+    addTextToImage(imageData, width, height, "RENDER ERROR", 10, height / 2 - 40)
+    addTextToImage(imageData, width, height, cameraPos.name, 10, height / 2 - 20)
+    addTextToImage(imageData, width, height, "Check logs", 10, height / 2)
+    addTextToImage(imageData, width, height, `Vertices: ${vertices.length}`, 10, height / 2 + 20)
 
     const bmpData = createBMP(imageData, width, height)
     const base64 = Buffer.from(bmpData).toString("base64")
@@ -440,13 +460,13 @@ async function renderModelAsPNG(
   }
 }
 
-// Triangle filling function
-function fillTriangle(
+// Enhanced triangle filling with color
+function fillTriangleWithColor(
   imageData: Uint8ClampedArray,
   width: number,
   height: number,
   points: [number, number][],
-  brightness: number,
+  color: [number, number, number],
 ) {
   const [p1, p2, p3] = points
 
@@ -459,11 +479,55 @@ function fillTriangle(
     for (let x = minX; x <= maxX; x++) {
       if (pointInTriangle([x, y], p1, p2, p3)) {
         const idx = (y * width + x) * 4
-        imageData[idx] = brightness
-        imageData[idx + 1] = brightness
-        imageData[idx + 2] = Math.floor(brightness * 1.1)
+        imageData[idx] = color[0]
+        imageData[idx + 1] = color[1]
+        imageData[idx + 2] = color[2]
         imageData[idx + 3] = 255
       }
+    }
+  }
+}
+
+// Simple line drawing
+function drawLine(
+  imageData: Uint8ClampedArray,
+  width: number,
+  height: number,
+  start: [number, number],
+  end: [number, number],
+  color: [number, number, number],
+) {
+  const [x0, y0] = start
+  const [x1, y1] = end
+
+  const dx = Math.abs(x1 - x0)
+  const dy = Math.abs(y1 - y0)
+  const sx = x0 < x1 ? 1 : -1
+  const sy = y0 < y1 ? 1 : -1
+  let err = dx - dy
+
+  let x = Math.round(x0)
+  let y = Math.round(y0)
+
+  while (true) {
+    if (x >= 0 && x < width && y >= 0 && y < height) {
+      const idx = (y * width + x) * 4
+      imageData[idx] = color[0]
+      imageData[idx + 1] = color[1]
+      imageData[idx + 2] = color[2]
+      imageData[idx + 3] = 255
+    }
+
+    if (x === Math.round(x1) && y === Math.round(y1)) break
+
+    const e2 = 2 * err
+    if (e2 > -dy) {
+      err -= dy
+      x += sx
+    }
+    if (e2 < dx) {
+      err += dx
+      y += sy
     }
   }
 }
@@ -529,6 +593,7 @@ function addTextToImage(
     "9": [0x70, 0x88, 0x88, 0x78, 0x08, 0x08, 0x70],
     " ": [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
     ".": [0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x60],
+    ":": [0x00, 0x60, 0x60, 0x00, 0x60, 0x60, 0x00],
   }
 
   for (let i = 0; i < text.length; i++) {
@@ -744,8 +809,8 @@ export async function GET() {
       method: "POST",
       status: "operational",
       timestamp: new Date().toISOString(),
-      version: "6.0.0",
-      format: "BMP images (compatible with AI analysis)",
+      version: "7.0.0",
+      format: "BMP images with wireframe and debug info",
     },
     {
       headers: corsHeaders,
