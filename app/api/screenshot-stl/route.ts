@@ -392,8 +392,58 @@ async function renderModelAsPNG(
             screenY = -z * scale
             depth = y
             break
+          case "iso_1": // +X, +Y, +Z
+            screenX = (x * 0.866 + z * 0.5) * scale
+            screenY = (y - z * 0.289 + x * 0.289) * scale
+            depth = x + y + z
+            break
+          case "iso_2": // -X, +Y, +Z
+            screenX = (-x * 0.866 + z * 0.5) * scale
+            screenY = (y - z * 0.289 - x * 0.289) * scale
+            depth = -x + y + z
+            break
+          case "iso_3": // +X, +Y, -Z
+            screenX = (x * 0.866 - z * 0.5) * scale
+            screenY = (y + z * 0.289 + x * 0.289) * scale
+            depth = x + y - z
+            break
+          case "iso_4": // -X, +Y, -Z
+            screenX = (-x * 0.866 - z * 0.5) * scale
+            screenY = (y + z * 0.289 - x * 0.289) * scale
+            depth = -x + y - z
+            break
+          case "corner_1": // +X, -Y, +Z
+            screenX = (x * 0.866 + z * 0.5) * scale
+            screenY = (-y - z * 0.289 + x * 0.289) * scale
+            depth = x - y + z
+            break
+          case "corner_2": // -X, -Y, +Z
+            screenX = (-x * 0.866 + z * 0.5) * scale
+            screenY = (-y - z * 0.289 - x * 0.289) * scale
+            depth = -x - y + z
+            break
+          case "corner_3": // +X, -Y, -Z
+            screenX = (x * 0.866 - z * 0.5) * scale
+            screenY = (-y + z * 0.289 + x * 0.289) * scale
+            depth = x - y - z
+            break
+          case "corner_4": // -X, -Y, -Z
+            screenX = (-x * 0.866 - z * 0.5) * scale
+            screenY = (-y + z * 0.289 - x * 0.289) * scale
+            depth = -x - y - z
+            break
+          case "angle_1": // Angled right view
+            screenX = (z * 0.3 + x * 0.9) * scale
+            screenY = (y + x * 0.1) * scale
+            depth = x * 0.9 + y + z * 0.3
+            break
+          case "angle_2": // Angled front view
+            screenX = (x + z * 0.9) * scale
+            screenY = (y + z * 0.1) * scale
+            depth = x + y + z * 0.9
+            break
           default:
-            // Isometric views with proper scaling
+            // Fallback isometric
             screenX = (x * 0.866 + z * 0.5) * scale
             screenY = (y + z * 0.289) * scale
             depth = x + y + z
