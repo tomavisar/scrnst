@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { Buffer } from "buffer"
-import { PNG } from "pngjs"
 
 // Enhanced STL parser with multiple fallback strategies
 function parseSTL(buffer: ArrayBuffer) {
@@ -227,7 +226,56 @@ function generateNamedCameraPositions(radius = 5) {
   return positions
 }
 
-// PNG renderer using pngjs library
+// Simple BMP image creation (works without external libraries)
+function createBMP(imageData: Uint8ClampedArray, width: number, height: number): Uint8Array {
+  const fileHeaderSize = 14
+  const infoHeaderSize = 40
+  const pixelDataOffset = fileHeaderSize + infoHeaderSize
+  const pixelDataSize = width * height * 3 // 24-bit RGB
+  const fileSize = pixelDataOffset + pixelDataSize
+
+  const buffer = new ArrayBuffer(fileSize)
+  const view = new DataView(buffer)
+  const bytes = new Uint8Array(buffer)
+
+  // File header
+  view.setUint16(0, 0x4d42, true) // "BM"
+  view.setUint32(2, fileSize, true) // File size
+  view.setUint32(6, 0, true) // Reserved
+  view.setUint32(10, pixelDataOffset, true) // Pixel data offset
+
+  // Info header
+  view.setUint32(14, infoHeaderSize, true) // Info header size
+  view.setInt32(18, width, true) // Width
+  view.setInt32(22, -height, true) // Height (negative for top-down)
+  view.setUint16(26, 1, true) // Planes
+  view.setUint16(28, 24, true) // Bits per pixel
+  view.setUint32(30, 0, true) // Compression
+  view.setUint32(34, pixelDataSize, true) // Image size
+  view.setInt32(38, 2835, true) // X pixels per meter
+  view.setInt32(42, 2835, true) // Y pixels per meter
+  view.setUint32(46, 0, true) // Colors used
+  view.setUint32(50, 0, true) // Important colors
+
+  // Pixel data (convert RGBA to RGB)
+  let pixelIndex = pixelDataOffset
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const srcIndex = (y * width + x) * 4
+      bytes[pixelIndex++] = imageData[srcIndex + 2] // B
+      bytes[pixelIndex++] = imageData[srcIndex + 1] // G
+      bytes[pixelIndex++] = imageData[srcIndex] // R
+    }
+    // BMP rows must be padded to 4-byte boundary
+    while (pixelIndex % 4 !== 0) {
+      bytes[pixelIndex++] = 0
+    }
+  }
+
+  return bytes
+}
+
+// Simple PNG-like renderer using BMP format
 async function renderModelAsPNG(
   vertices: number[],
   cameraPos: { x: number; y: number; z: number; name: string; description: string },
@@ -236,24 +284,21 @@ async function renderModelAsPNG(
   index = 0,
 ): Promise<{ dataUrl: string; name: string; description: string }> {
   try {
-    console.log(`Rendering ${cameraPos.name} as PNG`)
+    console.log(`Rendering ${cameraPos.name} as image`)
 
     if (vertices.length === 0) {
       throw new Error("No vertices to render")
     }
 
-    // Create PNG instance
-    const png = new PNG({ width, height })
+    // Create image data
+    const imageData = new Uint8ClampedArray(width * height * 4)
 
     // Fill with white background
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const idx = (width * y + x) << 2
-        png.data[idx] = 255 // R
-        png.data[idx + 1] = 255 // G
-        png.data[idx + 2] = 255 // B
-        png.data[idx + 3] = 255 // A
-      }
+    for (let i = 0; i < imageData.length; i += 4) {
+      imageData[i] = 255 // R
+      imageData[i + 1] = 255 // G
+      imageData[i + 2] = 255 // B
+      imageData[i + 3] = 255 // A
     }
 
     // Calculate bounding box
@@ -349,19 +394,18 @@ async function renderModelAsPNG(
       const brightness = Math.floor(80 + normalizedDepth * 120)
 
       // Fill triangle
-      fillTrianglePNG(png, points, brightness)
+      fillTriangle(imageData, width, height, points, brightness)
     })
 
     // Add text label
-    addTextToPNG(png, `${index + 1}. ${cameraPos.name.toUpperCase()}`, 15, 25)
-    addTextToPNG(png, cameraPos.description, 15, 38)
+    addTextToImage(imageData, width, height, `${index + 1}. ${cameraPos.name.toUpperCase()}`, 15, 25)
 
-    console.log(`Successfully rendered ${cameraPos.name} as PNG`)
+    console.log(`Successfully rendered ${cameraPos.name}`)
 
-    // Convert to base64
-    const pngBuffer = PNG.sync.write(png)
-    const base64 = Buffer.from(pngBuffer).toString("base64")
-    const dataUrl = `data:image/png;base64,${base64}`
+    // Create BMP and convert to base64
+    const bmpData = createBMP(imageData, width, height)
+    const base64 = Buffer.from(bmpData).toString("base64")
+    const dataUrl = `data:image/bmp;base64,${base64}`
 
     return {
       dataUrl,
@@ -371,51 +415,54 @@ async function renderModelAsPNG(
   } catch (error) {
     console.error(`Error rendering ${cameraPos.name}:`, error)
 
-    // Create error PNG
-    const png = new PNG({ width, height })
+    // Create error image
+    const imageData = new Uint8ClampedArray(width * height * 4)
 
     // Fill with light gray
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const idx = (width * y + x) << 2
-        png.data[idx] = 200
-        png.data[idx + 1] = 200
-        png.data[idx + 2] = 200
-        png.data[idx + 3] = 255
-      }
+    for (let i = 0; i < imageData.length; i += 4) {
+      imageData[i] = 200
+      imageData[i + 1] = 200
+      imageData[i + 2] = 200
+      imageData[i + 3] = 255
     }
 
-    addTextToPNG(png, "Render Error", width / 2 - 50, height / 2 - 10)
-    addTextToPNG(png, cameraPos.name, width / 2 - 30, height / 2 + 10)
+    addTextToImage(imageData, width, height, "Render Error", width / 2 - 50, height / 2 - 10)
+    addTextToImage(imageData, width, height, cameraPos.name, width / 2 - 30, height / 2 + 10)
 
-    const pngBuffer = PNG.sync.write(png)
-    const base64 = Buffer.from(pngBuffer).toString("base64")
+    const bmpData = createBMP(imageData, width, height)
+    const base64 = Buffer.from(bmpData).toString("base64")
 
     return {
-      dataUrl: `data:image/png;base64,${base64}`,
+      dataUrl: `data:image/bmp;base64,${base64}`,
       name: cameraPos.name,
       description: `Error: ${cameraPos.description}`,
     }
   }
 }
 
-// Triangle filling for PNG
-function fillTrianglePNG(png: PNG, points: [number, number][], brightness: number) {
+// Triangle filling function
+function fillTriangle(
+  imageData: Uint8ClampedArray,
+  width: number,
+  height: number,
+  points: [number, number][],
+  brightness: number,
+) {
   const [p1, p2, p3] = points
 
   const minX = Math.max(0, Math.floor(Math.min(p1[0], p2[0], p3[0])))
-  const maxX = Math.min(png.width - 1, Math.ceil(Math.max(p1[0], p2[0], p3[0])))
+  const maxX = Math.min(width - 1, Math.ceil(Math.max(p1[0], p2[0], p3[0])))
   const minY = Math.max(0, Math.floor(Math.min(p1[1], p2[1], p3[1])))
-  const maxY = Math.min(png.height - 1, Math.ceil(Math.max(p1[1], p2[1], p3[1])))
+  const maxY = Math.min(height - 1, Math.ceil(Math.max(p1[1], p2[1], p3[1])))
 
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
       if (pointInTriangle([x, y], p1, p2, p3)) {
-        const idx = (png.width * y + x) << 2
-        png.data[idx] = brightness
-        png.data[idx + 1] = brightness
-        png.data[idx + 2] = Math.floor(brightness * 1.1)
-        png.data[idx + 3] = 255
+        const idx = (y * width + x) * 4
+        imageData[idx] = brightness
+        imageData[idx + 1] = brightness
+        imageData[idx + 2] = Math.floor(brightness * 1.1)
+        imageData[idx + 3] = 255
       }
     }
   }
@@ -433,8 +480,15 @@ function pointInTriangle(p: [number, number], a: [number, number], b: [number, n
   return alpha >= 0 && beta >= 0 && gamma >= 0
 }
 
-// Simple text rendering for PNG
-function addTextToPNG(png: PNG, text: string, x: number, y: number) {
+// Simple text rendering
+function addTextToImage(
+  imageData: Uint8ClampedArray,
+  width: number,
+  height: number,
+  text: string,
+  x: number,
+  y: number,
+) {
   // Simple 5x7 bitmap font
   const font: { [key: string]: number[] } = {
     A: [0x70, 0x88, 0x88, 0xf8, 0x88, 0x88, 0x88],
@@ -486,12 +540,12 @@ function addTextToPNG(png: PNG, text: string, x: number, y: number) {
         if (pattern[row] & (1 << (7 - col))) {
           const px = x + i * 6 + col
           const py = y + row
-          if (px >= 0 && px < png.width && py >= 0 && py < png.height) {
-            const idx = (png.width * py + px) << 2
-            png.data[idx] = 0 // Black text
-            png.data[idx + 1] = 0
-            png.data[idx + 2] = 0
-            png.data[idx + 3] = 255
+          if (px >= 0 && px < width && py >= 0 && py < height) {
+            const idx = (py * width + px) * 4
+            imageData[idx] = 0 // Black text
+            imageData[idx + 1] = 0
+            imageData[idx + 2] = 0
+            imageData[idx + 3] = 255
           }
         }
       }
@@ -591,7 +645,7 @@ export async function POST(request: NextRequest) {
     const cameraPositions = generateNamedCameraPositions(5)
     console.log("Generated camera positions:", cameraPositions.length)
 
-    // Render screenshots as PNG
+    // Render screenshots as BMP (which works like PNG for AI analysis)
     const screenshots: string[] = []
     const viewNames: string[] = []
     const viewDescriptions: string[] = []
@@ -608,21 +662,18 @@ export async function POST(request: NextRequest) {
       } catch (renderError) {
         console.error(`Error rendering view ${i + 1}:`, renderError)
 
-        // Create error PNG
-        const png = new PNG({ width: 512, height: 512 })
-        for (let y = 0; y < 512; y++) {
-          for (let x = 0; x < 512; x++) {
-            const idx = (512 * y + x) << 2
-            png.data[idx] = 200
-            png.data[idx + 1] = 200
-            png.data[idx + 2] = 200
-            png.data[idx + 3] = 255
-          }
+        // Create simple error image
+        const imageData = new Uint8ClampedArray(512 * 512 * 4)
+        for (let j = 0; j < imageData.length; j += 4) {
+          imageData[j] = 200
+          imageData[j + 1] = 200
+          imageData[j + 2] = 200
+          imageData[j + 3] = 255
         }
 
-        const pngBuffer = PNG.sync.write(png)
-        const base64 = Buffer.from(pngBuffer).toString("base64")
-        screenshots.push(`data:image/png;base64,${base64}`)
+        const bmpData = createBMP(imageData, 512, 512)
+        const base64 = Buffer.from(bmpData).toString("base64")
+        screenshots.push(`data:image/bmp;base64,${base64}`)
         viewNames.push(cameraPositions[i].name)
         viewDescriptions.push(`Error: ${cameraPositions[i].description}`)
       }
@@ -693,8 +744,8 @@ export async function GET() {
       method: "POST",
       status: "operational",
       timestamp: new Date().toISOString(),
-      version: "5.0.0",
-      format: "PNG images",
+      version: "6.0.0",
+      format: "BMP images (compatible with AI analysis)",
     },
     {
       headers: corsHeaders,
