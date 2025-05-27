@@ -392,55 +392,55 @@ async function renderModelAsPNG(
             screenY = -z * scale
             depth = y
             break
-          case "iso_1": // +X, +Y, +Z
-            screenX = (x * 0.866 + z * 0.5) * scale
-            screenY = (y - z * 0.289 + x * 0.289) * scale
+          case "iso_1": // Front-right-top corner
+            screenX = (x * 0.707 + z * 0.707) * scale
+            screenY = (y * 0.816 - x * 0.408 + z * 0.408) * scale
             depth = x + y + z
             break
-          case "iso_2": // -X, +Y, +Z
-            screenX = (-x * 0.866 + z * 0.5) * scale
-            screenY = (y - z * 0.289 - x * 0.289) * scale
+          case "iso_2": // Front-left-top corner
+            screenX = (-x * 0.707 + z * 0.707) * scale
+            screenY = (y * 0.816 + x * 0.408 + z * 0.408) * scale
             depth = -x + y + z
             break
-          case "iso_3": // +X, +Y, -Z
-            screenX = (x * 0.866 - z * 0.5) * scale
-            screenY = (y + z * 0.289 + x * 0.289) * scale
+          case "iso_3": // Back-right-top corner
+            screenX = (x * 0.707 - z * 0.707) * scale
+            screenY = (y * 0.816 - x * 0.408 - z * 0.408) * scale
             depth = x + y - z
             break
-          case "iso_4": // -X, +Y, -Z
-            screenX = (-x * 0.866 - z * 0.5) * scale
-            screenY = (y + z * 0.289 - x * 0.289) * scale
+          case "iso_4": // Back-left-top corner
+            screenX = (-x * 0.707 - z * 0.707) * scale
+            screenY = (y * 0.816 + x * 0.408 - z * 0.408) * scale
             depth = -x + y - z
             break
-          case "corner_1": // +X, -Y, +Z
-            screenX = (x * 0.866 + z * 0.5) * scale
-            screenY = (-y - z * 0.289 + x * 0.289) * scale
+          case "corner_1": // Front-right-bottom corner
+            screenX = (x * 0.707 + z * 0.707) * scale
+            screenY = (-y * 0.816 - x * 0.408 + z * 0.408) * scale
             depth = x - y + z
             break
-          case "corner_2": // -X, -Y, +Z
-            screenX = (-x * 0.866 + z * 0.5) * scale
-            screenY = (-y - z * 0.289 - x * 0.289) * scale
+          case "corner_2": // Front-left-bottom corner
+            screenX = (-x * 0.707 + z * 0.707) * scale
+            screenY = (-y * 0.816 + x * 0.408 + z * 0.408) * scale
             depth = -x - y + z
             break
-          case "corner_3": // +X, -Y, -Z
-            screenX = (x * 0.866 - z * 0.5) * scale
-            screenY = (-y + z * 0.289 + x * 0.289) * scale
+          case "corner_3": // Back-right-bottom corner
+            screenX = (x * 0.707 - z * 0.707) * scale
+            screenY = (-y * 0.816 - x * 0.408 - z * 0.408) * scale
             depth = x - y - z
             break
-          case "corner_4": // -X, -Y, -Z
-            screenX = (-x * 0.866 - z * 0.5) * scale
-            screenY = (-y + z * 0.289 - x * 0.289) * scale
+          case "corner_4": // Back-left-bottom corner
+            screenX = (-x * 0.707 - z * 0.707) * scale
+            screenY = (-y * 0.816 + x * 0.408 - z * 0.408) * scale
             depth = -x - y - z
             break
-          case "angle_1": // Angled right view
-            screenX = (z * 0.3 + x * 0.9) * scale
+          case "angle_1": // 45-degree right side view
+            screenX = (x * 0.5 + z * 0.866) * scale
             screenY = (y + x * 0.1) * scale
-            depth = x * 0.9 + y + z * 0.3
+            depth = x * 0.5 + y + z * 0.866
             break
-          case "angle_2": // Angled front view
-            screenX = (x + z * 0.9) * scale
+          case "angle_2": // 45-degree front view
+            screenX = (x * 0.866 + z * 0.5) * scale
             screenY = (y + z * 0.1) * scale
-            depth = x + y + z * 0.9
+            depth = x * 0.866 + y + z * 0.5
             break
           default:
             // Fallback isometric
