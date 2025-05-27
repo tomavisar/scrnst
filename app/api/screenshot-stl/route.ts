@@ -327,8 +327,16 @@ async function renderModelAsPNG(
     const modelCenter = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2]
     const modelSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
 
+    // Adjust camera distance based on model size
+    const distance = modelSize * 2
+    const adjustedCameraPos = {
+      x: (cameraPos.x * distance) / 5,
+      y: (cameraPos.y * distance) / 5,
+      z: (cameraPos.z * distance) / 5,
+    }
+    const eye = [adjustedCameraPos.x, adjustedCameraPos.y, adjustedCameraPos.z]
+
     // Create camera transformation matrix
-    const eye = [cameraPos.x, cameraPos.y, cameraPos.z]
     const target = modelCenter
     const up = [0, 1, 0] // Y is up
     const viewMatrix = createLookAtMatrix(eye, target, up)
@@ -347,19 +355,7 @@ async function renderModelAsPNG(
     console.log(`Camera position: (${eye[0].toFixed(2)}, ${eye[1].toFixed(2)}, ${eye[2].toFixed(2)})`)
     console.log(`Scale: ${scale.toFixed(2)}`)
 
-    // Add a simple test - draw a red square in the center to verify PNG creation works
-    const testSize = 50
-    for (let y = height / 2 - testSize; y < height / 2 + testSize; y++) {
-      for (let x = width / 2 - testSize; x < width / 2 + testSize; x++) {
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          const idx = (width * y + x) << 2
-          png.data[idx] = 255 // R - red test square
-          png.data[idx + 1] = 0 // G
-          png.data[idx + 2] = 0 // B
-          png.data[idx + 3] = 255 // A
-        }
-      }
-    }
+    let trianglesRendered = 0
 
     // Create depth buffer
     const depthBuffer = new Float32Array(width * height)
@@ -410,7 +406,14 @@ async function renderModelAsPNG(
       if (triangle.length === 3) {
         fillTriangle(png, depthBuffer, triangle, [finalColor, finalColor, finalColor + 20])
       }
+
+      trianglesRendered++
+      if (trianglesRendered % 100 === 0) {
+        console.log(`Rendered ${trianglesRendered} triangles for ${cameraPos.name}`)
+      }
     }
+
+    console.log(`Total triangles rendered for ${cameraPos.name}: ${trianglesRendered}`)
 
     console.log(`Successfully rendered ${cameraPos.name}`)
 
