@@ -336,6 +336,31 @@ async function renderModelAsPNG(
     // Calculate scale to fit model in view
     const scale = (Math.min(width, height) * 0.8) / modelSize
 
+    // Add debugging information
+    console.log(
+      `Model bounds: X(${minX.toFixed(2)} to ${maxX.toFixed(2)}), Y(${minY.toFixed(2)} to ${maxY.toFixed(2)}), Z(${minZ.toFixed(2)} to ${maxZ.toFixed(2)})`,
+    )
+    console.log(
+      `Model center: (${modelCenter[0].toFixed(2)}, ${modelCenter[1].toFixed(2)}, ${modelCenter[2].toFixed(2)})`,
+    )
+    console.log(`Model size: ${modelSize.toFixed(2)}`)
+    console.log(`Camera position: (${eye[0].toFixed(2)}, ${eye[1].toFixed(2)}, ${eye[2].toFixed(2)})`)
+    console.log(`Scale: ${scale.toFixed(2)}`)
+
+    // Add a simple test - draw a red square in the center to verify PNG creation works
+    const testSize = 50
+    for (let y = height / 2 - testSize; y < height / 2 + testSize; y++) {
+      for (let x = width / 2 - testSize; x < width / 2 + testSize; x++) {
+        if (x >= 0 && x < width && y >= 0 && y < height) {
+          const idx = (width * y + x) << 2
+          png.data[idx] = 255 // R - red test square
+          png.data[idx + 1] = 0 // G
+          png.data[idx + 2] = 0 // B
+          png.data[idx + 3] = 255 // A
+        }
+      }
+    }
+
     // Create depth buffer
     const depthBuffer = new Float32Array(width * height)
     depthBuffer.fill(Number.NEGATIVE_INFINITY)
@@ -604,26 +629,33 @@ export async function POST(request: NextRequest) {
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
     }
 
-    return NextResponse.json(
-      {
-        success: true,
-        screenshots: screenshots,
-        viewNames: viewNames,
-        viewDescriptions: viewDescriptions,
-        count: screenshots.length,
-        filename: file.name,
-        triangles: triangleCount,
-        views: cameraPositions.map((pos, i) => ({
-          index: i + 1,
-          name: pos.name,
-          description: pos.description,
-          position: { x: pos.x, y: pos.y, z: pos.z },
-        })),
-      },
-      {
-        headers: corsHeaders,
-      },
-    )
+    const responseData = {
+      success: true,
+      screenshots: screenshots,
+      viewNames: viewNames,
+      viewDescriptions: viewDescriptions,
+      count: screenshots.length,
+      filename: file.name,
+      triangles: triangleCount,
+      views: cameraPositions.map((pos, i) => ({
+        index: i + 1,
+        name: pos.name,
+        description: pos.description,
+        position: { x: pos.x, y: pos.y, z: pos.z },
+      })),
+    }
+
+    console.log("Final response data:", {
+      success: true,
+      screenshotCount: screenshots.length,
+      viewNamesCount: viewNames.length,
+      firstScreenshotLength: screenshots[0]?.length || 0,
+      sampleViewNames: viewNames.slice(0, 3),
+    })
+
+    return NextResponse.json(responseData, {
+      headers: corsHeaders,
+    })
   } catch (error) {
     console.error("Error processing STL file:", error)
 
